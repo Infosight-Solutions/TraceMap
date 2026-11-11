@@ -2,6 +2,9 @@
 # Everything readers see that is not about a specific regulation lives here.
 
 title: Compliance Catalog
+# ^ This is the purpose label that appears in the browser tab and the page header.
+# It combines with your organization name and "TraceMap" to form the full title:
+# "Northfield Systems · Compliance Catalog · TraceMap"
 organization: Northfield Systems, Inc. (fictional example company)
 version: example-1
 as_of: 2026-09-01
@@ -18,7 +21,7 @@ home_intro: >
 search_placeholder: Try "access", "breach", "vendor", or a document ID
 reg_doc_label: plain-language summary
 footer_note: >
-  Example dataset for the open source compliance-catalog tool. Northfield Systems is fictional.
+  Example dataset for the open source TraceMap tool. Northfield Systems is fictional.
 
 # Default review interval for mappings and documents without their own.
 review_interval_days: 365

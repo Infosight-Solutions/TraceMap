@@ -1,7 +1,7 @@
 /*
- * compliance-catalog front end
+ * tracemap front end
  *
- * Reads window.COMPLIANCE_DATA (embedded at build time) and renders a
+ * Reads window.TRACEMAP_DATA (embedded at build time) and renders a
  * hash-routed, fully static catalog. No network requests, no storage.
  *
  * Routes
@@ -21,7 +21,7 @@
 (function () {
   'use strict';
 
-  var D = window.COMPLIANCE_DATA;
+  var D = window.TRACEMAP_DATA;
   if (!D) {
     document.getElementById('app').textContent = 'No catalog data was embedded. Rebuild with build.js.';
     return;
@@ -362,7 +362,7 @@
     return [
       el('header', { class: 'topbar' }, el('div', { class: 'topbar-inner' },
         el('a', { class: 'brand', href: '#/' },
-          el('span', { class: 'brand-title' }, C.title || 'Compliance Catalog'),
+          el('span', { class: 'brand-title' }, C.title || 'TraceMap'),
           C.organization ? el('span', { class: 'brand-org' }, C.organization) : null),
         nav)),
       el('div', { class: 'notice' }, el('div', { class: 'notice-inner' },
@@ -377,7 +377,7 @@
     return el('footer', { class: 'footer' }, el('div', { class: 'footer-inner' },
       el('div', null, C.footer_note || 'Static snapshot. Links open the authoritative documents in their source system.'),
       el('div', null, 'Built ' + (bm.built_at ? fmtDate(bm.built_at.slice(0, 10)) : '') +
-        (C.version ? ', version ' + C.version : '') + ', compliance-catalog ' + (bm.tool_version || ''))));
+        (C.version ? ', version ' + C.version : '') + ', tracemap ' + (bm.tool_version || ''))));
   }
   function crumbs(parts) {
     var n = el('nav', { class: 'crumbs', 'aria-label': 'Breadcrumb' });
@@ -1141,7 +1141,11 @@
     keepNext = false;
     lastBase = base;
     var titleBits = { topic: TOPIC[parts[1]] && TOPIC[parts[1]].name, reg: REG[parts[1]] && REG[parts[1]].name, doc: parts[1] };
-    document.title = (titleBits[route] ? titleBits[route] + ', ' : '') + (C.title || 'Compliance Catalog');
+    var orgPart = C.organization ? C.organization + ' · ' : '';
+    var purposePart = C.title || 'TraceMap';
+    var brandSuffix = purposePart !== 'TraceMap' ? ' · TraceMap' : '';
+    var baseTitle = orgPart + purposePart + brandSuffix;
+    document.title = (titleBits[route] ? titleBits[route] + ' · ' : '') + baseTitle;
   }
 
   window.addEventListener('hashchange', function () { render(false); });

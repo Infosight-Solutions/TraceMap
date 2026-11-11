@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /*
- * compliance-catalog build
+ * tracemap build
  *
  * Reads the YAML files in a data directory, validates every cross-reference,
  * and writes one self-contained HTML file with the data, styles, and app code
  * embedded. The output needs no server and no network access.
  *
  * Usage:
- *   node build.js                       # data/ -> dist/compliance-catalog.html
+ *   node build.js                       # data/ -> dist/tracemap.html
  *   node build.js --data data-example   # public example dataset
  *   node build.js --data data --out dist/catalog.html
  */
@@ -37,8 +37,8 @@ function parseArgs(argv) {
   if (!args.out) {
     const base = path.basename(path.resolve(args.data));
     args.out = base === 'data'
-      ? 'dist/compliance-catalog.html'
-      : 'dist/compliance-catalog-' + base.replace(/^data-/, '') + '.html';
+      ? 'dist/tracemap.html'
+      : 'dist/tracemap-' + base.replace(/^data-/, '') + '.html';
   }
   return args;
 }
@@ -263,9 +263,13 @@ function main() {
   };
   let html = template;
   html = replace(html, '/*__STYLES__*/', css);
-  html = replace(html, '/*__COMPLIANCE_DATA__*/', 'window.COMPLIANCE_DATA = ' + json + ';');
+  html = replace(html, '/*__COMPLIANCE_DATA__*/', 'window.TRACEMAP_DATA = ' + json + ';');
   html = replace(html, '/*__APP__*/', app.replace(/<\/script/gi, '<\\/script'));
-  html = replace(html, '__TITLE__', escapeHtml(data.catalog.title || 'Compliance Catalog'));
+  const c = data.catalog;
+  const orgPart = c.organization ? c.organization + ' · ' : '';
+  const purposePart = c.title || 'TraceMap';
+  const brandSuffix = purposePart !== 'TraceMap' ? ' · TraceMap' : '';
+  html = replace(html, '__TITLE__', escapeHtml(orgPart + purposePart + brandSuffix));
 
   const out = path.resolve(args.out);
   fs.mkdirSync(path.dirname(out), { recursive: true });

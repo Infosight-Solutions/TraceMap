@@ -1,4 +1,4 @@
-# Compliance Catalog
+# TraceMap
 
 A static HTML compliance catalog generator for regulated environments.
 
@@ -18,13 +18,13 @@ Compliance evidence is easier to consume when it is navigable rather than pagina
 ## Getting started
 
 ```bash
-git clone https://github.com/<your-username>/compliance-catalog.git
-cd compliance-catalog
+git clone https://github.com/<your-username>/tracemap.git
+cd tracemap
 npm install
 npm run build:example
 ```
 
-Open `dist/compliance-catalog-example.html` in any browser to see a working example built from NIST SP 800-171 Rev 3 controls.
+Open `dist/tracemap-example.html` in any browser to see a working example built from NIST SP 800-171 Rev 3 controls.
 
 To build against your own data, copy the example files to `data/` and edit them:
 
@@ -33,7 +33,7 @@ cp data-example/*.yaml data/
 npm run build
 ```
 
-The generated file lands in `dist/compliance-catalog.html`. The `data/` directory is gitignored by default so private compliance data never enters the repository.
+The generated file lands in `dist/tracemap.html`. The `data/` directory is gitignored by default so private compliance data never enters the repository.
 
 ## Data schema
 

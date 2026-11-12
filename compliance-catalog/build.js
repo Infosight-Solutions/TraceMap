@@ -83,8 +83,8 @@ function loadYaml(dir, file, key, required) {
 
 // ---------- validation ----------
 const SOURCE_TYPES = ['mandate', 'guidance', 'standard', 'market'];
-const OBLIGATION_TYPES = ['compliant_with', 'certified_to', 'aligned_with', 'implements', 'supports_client'];
-const STATUSES = ['addressed', 'partially_addressed', 'not_addressed', 'not_assessed'];
+const OBLIGATION_TYPES = ['compliant_with', 'certified_to', 'aligned_with', 'implements', 'context'];
+const STATUSES = ['verified', 'deviations_noted', 'verification_pending', 'not_assessed'];
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function validate(d) {
@@ -206,7 +206,7 @@ function validate(d) {
       if (!documents.has(e.document_id)) err(where, 'document_id "' + e.document_id + '" is not in documents.yaml');
       if (e.layer && !layers.has(e.layer)) err(where, 'layer "' + e.layer + '" is not defined in catalog.yaml layers');
     });
-    if ((m.status === 'partially_addressed' || m.status === 'not_addressed') && !m.rationale) {
+    if ((m.status === 'deviations_noted' || m.status === 'verification_pending') && !m.rationale) {
       warn(where, m.status + ' without a rationale');
     }
     checkDate(where, 'last_reviewed', m.last_reviewed);

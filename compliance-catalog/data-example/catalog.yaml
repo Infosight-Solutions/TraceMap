@@ -49,9 +49,9 @@ layers:
 
 # Optional: rename the four documentation statuses.
 status_labels:
-  addressed: Addressed in documentation
-  partially_addressed: Partially addressed
-  not_addressed: Not addressed
+  verified: Verified
+  deviations_noted: Deviations noted
+  verification_pending: Verification pending
   not_assessed: Not yet assessed
 
 # Checkboxes on the home page. Regulations list the ids they apply to in applies_if.

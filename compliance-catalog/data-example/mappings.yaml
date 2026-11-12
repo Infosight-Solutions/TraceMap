@@ -1,46 +1,46 @@
 # Which documents address each requirement, and how completely.
 #
-# status   addressed | partially_addressed | not_addressed | not_assessed
+# status   verified | deviations_noted | verification_pending | not_assessed
 #          (requirements with no mapping count as not_assessed)
 # layer    optional; defaults to the document's own layer
-# rationale  required in practice for partial or not addressed; shown to readers
+# rationale  required in practice for deviations_noted or verification_pending; shown to readers
 
 mappings:
   # Access
   - obligation_id: soc2-cc6-2
-    status: addressed
+    status: verified
     documents:
       - document_id: POL-002
       - document_id: PRC-004
       - document_id: EVD-001
     last_reviewed: 2026-07-10
   - obligation_id: iso-a-5-18
-    status: addressed
+    status: verified
     documents:
       - document_id: POL-002
       - document_id: PRC-004
       - document_id: EVD-001
     last_reviewed: 2026-07-10
   - obligation_id: csf-pr-aa-01
-    status: addressed
+    status: verified
     documents:
       - document_id: POL-002
       - document_id: STD-003
     last_reviewed: 2026-07-10
   - obligation_id: soc2-cc6-3
-    status: partially_addressed
+    status: deviations_noted
     documents:
       - document_id: POL-002
     rationale: The policy requires least privilege, but no procedure says how administrator access is approved or reviewed.
     last_reviewed: 2026-02-02
   - obligation_id: iso-a-8-2
-    status: partially_addressed
+    status: deviations_noted
     documents:
       - document_id: POL-002
     rationale: The policy requires least privilege, but no procedure says how administrator access is approved or reviewed.
     last_reviewed: 2026-02-02
   - obligation_id: csf-pr-aa-05
-    status: partially_addressed
+    status: deviations_noted
     documents:
       - document_id: POL-002
       - document_id: PRC-004
@@ -49,52 +49,52 @@ mappings:
 
   # Identity
   - obligation_id: soc2-cc6-1
-    status: addressed
+    status: verified
     documents:
       - document_id: POL-002
       - document_id: STD-003
     last_reviewed: 2025-06-15
   - obligation_id: iso-a-8-5
-    status: addressed
+    status: verified
     documents:
       - document_id: STD-003
     last_reviewed: 2025-06-15
   - obligation_id: csf-pr-aa-03
-    status: addressed
+    status: verified
     documents:
       - document_id: STD-003
     last_reviewed: 2025-06-15
 
   # Data protection
   - obligation_id: iso-a-8-24
-    status: addressed
+    status: verified
     documents:
       - document_id: POL-001
       - document_id: STD-001
     last_reviewed: 2026-03-20
   - obligation_id: csf-pr-ds-01
-    status: addressed
+    status: verified
     documents:
       - document_id: STD-001
     last_reviewed: 2026-03-20
   - obligation_id: csf-pr-ds-02
-    status: addressed
+    status: verified
     documents:
       - document_id: STD-001
     last_reviewed: 2026-03-20
   - obligation_id: gdpr-32-1-a
-    status: addressed
+    status: verified
     documents:
       - document_id: POL-003
       - document_id: STD-001
     last_reviewed: 2026-03-20
   - obligation_id: soc2-cc6-7
-    status: addressed
+    status: verified
     documents:
       - document_id: STD-001
     last_reviewed: 2026-03-20
   - obligation_id: gdpr-5-1-f
-    status: addressed
+    status: verified
     documents:
       - document_id: POL-003
       - document_id: STD-001
@@ -102,13 +102,13 @@ mappings:
 
   # Logging
   - obligation_id: iso-a-8-15
-    status: partially_addressed
+    status: deviations_noted
     documents:
       - document_id: STD-002
     rationale: The standard defines what to log, but no retention period for logs has been set.
     last_reviewed: 2026-05-06
   - obligation_id: csf-pr-ps-04
-    status: partially_addressed
+    status: deviations_noted
     documents:
       - document_id: STD-002
     rationale: The standard defines what to log, but no retention period for logs has been set.
@@ -116,64 +116,64 @@ mappings:
 
   # Incidents
   - obligation_id: iso-a-5-24
-    status: addressed
+    status: verified
     documents:
       - document_id: PRC-001
       - document_id: EVD-002
     last_reviewed: 2026-05-20
   - obligation_id: csf-rs-ma-01
-    status: addressed
+    status: verified
     documents:
       - document_id: PRC-001
       - document_id: EVD-002
     last_reviewed: 2026-05-20
   - obligation_id: soc2-cc7-4
-    status: addressed
+    status: verified
     documents:
       - document_id: PRC-001
     last_reviewed: 2026-05-20
   - obligation_id: gdpr-33-1
-    status: addressed
+    status: verified
     documents:
       - document_id: PRC-001
       - document_id: PRC-002
     last_reviewed: 2026-02-12
   - obligation_id: gdpr-34-1
-    status: partially_addressed
+    status: deviations_noted
     documents:
       - document_id: PRC-002
     rationale: The procedure covers notifying the regulator. Who approves the message to affected people, and how it is sent, is not defined.
     last_reviewed: 2026-02-12
   - obligation_id: sec-8k-105
-    status: not_addressed
+    status: verification_pending
     rationale: No documented process for deciding and filing SEC incident disclosures. PRC-005 is being drafted to cover it.
     last_reviewed: 2026-03-10
   - obligation_id: sec-materiality
-    status: not_addressed
+    status: verification_pending
     rationale: No documented process for deciding and filing SEC incident disclosures. PRC-005 is being drafted to cover it.
     last_reviewed: 2026-03-10
 
   # Vendors
   - obligation_id: iso-a-5-19
-    status: addressed
+    status: verified
     documents:
       - document_id: PRC-003
       - document_id: EVD-003
     last_reviewed: 2026-08-29
   - obligation_id: soc2-cc9-2
-    status: addressed
+    status: verified
     documents:
       - document_id: PRC-003
       - document_id: EVD-003
     last_reviewed: 2026-08-29
   - obligation_id: csf-gv-sc-07
-    status: partially_addressed
+    status: deviations_noted
     documents:
       - document_id: PRC-003
     rationale: Suppliers are reviewed before signing, but the procedure does not require repeat reviews during the contract.
     last_reviewed: 2026-08-29
   - obligation_id: gdpr-28-1
-    status: addressed
+    status: verified
     documents:
       - document_id: POL-003
       - document_id: PRC-003
@@ -181,61 +181,61 @@ mappings:
 
   # Personal information and retention
   - obligation_id: gdpr-15
-    status: partially_addressed
+    status: deviations_noted
     documents:
       - document_id: POL-003
     rationale: The policy commits to answering access requests. There is no procedure for verifying identity or meeting the one-month deadline.
     last_reviewed: 2026-02-12
   - obligation_id: gdpr-30
-    status: not_addressed
+    status: verification_pending
     rationale: No record of processing activities exists yet.
     last_reviewed: 2026-02-12
   - obligation_id: gdpr-5-1-e
-    status: partially_addressed
+    status: deviations_noted
     documents:
       - document_id: POL-004
     rationale: Retention periods are set for customer data but not for employee or marketing data.
     last_reviewed: 2025-04-30
   - obligation_id: iso-a-8-10
-    status: addressed
+    status: verified
     documents:
       - document_id: POL-004
     last_reviewed: 2025-04-30
 
   # Oversight
   - obligation_id: sec-106-b
-    status: addressed
+    status: verified
     documents:
       - document_id: POL-001
     last_reviewed: 2026-01-20
   - obligation_id: iso-6-1-2
-    status: addressed
+    status: verified
     documents:
       - document_id: POL-001
     last_reviewed: 2026-01-20
   - obligation_id: soc2-cc3-2
-    status: addressed
+    status: verified
     documents:
       - document_id: POL-001
     last_reviewed: 2026-01-20
   - obligation_id: sec-106-c
-    status: addressed
+    status: verified
     documents:
       - document_id: POL-005
     last_reviewed: 2026-03-02
   - obligation_id: csf-gv-rr-01
-    status: addressed
+    status: verified
     documents:
       - document_id: POL-005
     last_reviewed: 2026-03-02
   - obligation_id: iso-5-1
-    status: addressed
+    status: verified
     documents:
       - document_id: POL-001
       - document_id: POL-005
     last_reviewed: 2026-03-02
   - obligation_id: soc2-cc1-2
-    status: addressed
+    status: verified
     documents:
       - document_id: POL-005
     last_reviewed: 2026-03-02

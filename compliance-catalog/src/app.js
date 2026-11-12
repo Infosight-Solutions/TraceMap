@@ -47,11 +47,11 @@
   var MAP = {};
   (D.mappings || []).forEach(function (m) { MAP[m.obligation_id] = m; });
 
-  var STATUS_KEYS = ['addressed', 'partially_addressed', 'not_addressed', 'not_assessed'];
+  var STATUS_KEYS = ['verified', 'deviations_noted', 'verification_pending', 'not_assessed'];
   var LABEL = {
-    addressed: 'Addressed in documentation',
-    partially_addressed: 'Partially addressed',
-    not_addressed: 'Not addressed',
+    verified: 'Verified',
+    deviations_noted: 'Deviations noted',
+    verification_pending: 'Verification pending',
     not_assessed: 'Not yet assessed'
   };
   Object.keys(C.status_labels || {}).forEach(function (k) { LABEL[k] = C.status_labels[k]; });
@@ -62,7 +62,7 @@
     certified_to: 'Certified or attested to',
     aligned_with: 'Aligned with',
     implements: 'Implements',
-    supports_client: 'Context: supports client obligations'
+    context: 'Listed for context only'
   };
 
   var oblsByReg = {};
@@ -87,7 +87,7 @@
     return t;
   }
   function status(o) { return (MAP[o.id] && MAP[o.id].status) || 'not_assessed'; }
-  function isContext(r) { return r.obligation_type === 'supports_client' || r.coverage === 'context'; }
+  function isContext(r) { return r.obligation_type === 'context'; }
 
   // ------------------------------------------------------------------
   // Dates and review cadence
@@ -189,7 +189,7 @@
   // Coverage
   // ------------------------------------------------------------------
   function coverage(list, extraUnlisted) {
-    var c = { addressed: 0, partially_addressed: 0, not_addressed: 0, not_assessed: 0, total: 0 };
+    var c = { verified: 0, deviations_noted: 0, verification_pending: 0, not_assessed: 0, total: 0 };
     list.forEach(function (o) { c[status(o)]++; c.total++; });
     if (extraUnlisted > 0) { c.not_assessed += extraUnlisted; c.total += extraUnlisted; }
     return c;
@@ -250,7 +250,7 @@
 
   function bar(c, large) {
     var b = el('div', { class: 'bar' + (large ? ' bar-lg' : ''), role: 'img', 'aria-label': coverageText(c) });
-    if (c.total) ['addressed', 'partially_addressed', 'not_addressed'].forEach(function (k) {
+    if (c.total) ['verified', 'deviations_noted', 'verification_pending'].forEach(function (k) {
       if (c[k]) b.appendChild(el('span', { class: 'b-' + k, style: 'width:' + Math.max(1.5, 100 * c[k] / c.total) + '%' }));
     });
     return b;
@@ -258,7 +258,7 @@
   function coverageText(c) {
     if (!c.total) return 'No requirements listed yet';
     var assessed = c.total - c.not_assessed;
-    return c.addressed + ' of ' + c.total + ' addressed' + (assessed < c.total ? ', ' + c.not_assessed + ' not yet assessed' : '');
+    return c.verified + ' of ' + c.total + ' verified' + (assessed < c.total ? ', ' + c.not_assessed + ' not yet assessed' : '');
   }
 
   function docLink(d) {
@@ -367,7 +367,7 @@
         nav)),
       el('div', { class: 'notice' }, el('div', { class: 'notice-inner' },
         svg(ICON.info, '#1B3A5C'),
-        el('div', { style: 'flex:1 1 480px' }, C.scope_notice || 'This catalog shows whether each requirement is addressed in documentation.'),
+        el('div', { style: 'flex:1 1 480px' }, C.scope_notice || 'This catalog shows whether each requirement is verified in documentation.'),
         C.sample_notice ? el('span', { class: 'sample-flag' }, C.sample_notice) : null,
         el('span', { class: 'notice-meta' }, C.as_of ? 'Status as of ' + fmtDate(C.as_of) : '')))
     ];
@@ -566,11 +566,11 @@
         el('div', { class: 'row' }, el('span', { class: 'muted', style: 'font-size:14px' }, 'Group by'), seg,
           csvButton('Regulations CSV', function () {
             downloadCsv('regulations-' + fileStamp() + '.csv',
-              ['ID', 'Regulation', 'Full title', 'Type', 'Relationship', 'Next date', 'Addressed', 'Partial', 'Not addressed', 'Not yet assessed', 'Total'],
+              ['ID', 'Regulation', 'Full title', 'Type', 'Relationship', 'Next date', 'Verified', 'Deviations noted', 'Verification pending', 'Not yet assessed', 'Total'],
               regs.map(function (r) {
                 var c = regCoverage(r); var nd = nextDate(r);
                 return [r.id, r.name, r.full_title || '', SOURCE_TYPE_LABEL[r.source_type] || '', OBLIGATION_VERB[r.obligation_type] || '',
-                  nd ? nd.label + ' ' + keyDateText(nd) : '', c.addressed, c.partially_addressed, c.not_addressed, c.not_assessed, c.total];
+                  nd ? nd.label + ' ' + keyDateText(nd) : '', c.verified, c.deviations_noted, c.verification_pending, c.not_assessed, c.total];
               }));
           }),
           csvButton('Requirements CSV', function () {
@@ -581,9 +581,9 @@
   }
   function legend() {
     return el('div', { class: 'legend' },
-      el('span', null, el('span', { class: 'swatch', style: 'background:#1B3A5C' }), LABEL.addressed),
-      el('span', null, el('span', { class: 'swatch', style: 'background:#D98B2B' }), LABEL.partially_addressed),
-      el('span', null, el('span', { class: 'swatch', style: 'background:#8E1B1B' }), LABEL.not_addressed),
+      el('span', null, el('span', { class: 'swatch', style: 'background:#1B3A5C' }), LABEL.verified),
+      el('span', null, el('span', { class: 'swatch', style: 'background:#D98B2B' }), LABEL.deviations_noted),
+      el('span', null, el('span', { class: 'swatch', style: 'background:#8E1B1B' }), LABEL.verification_pending),
       el('span', null, el('span', { class: 'swatch', style: 'background:#E3E1DA;border:1px solid #A9A69C' }), LABEL.not_assessed));
   }
 

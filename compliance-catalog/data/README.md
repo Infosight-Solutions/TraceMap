@@ -14,6 +14,6 @@ Then build:
 npm run build
 ```
 
-The generated HTML file will land in `dist/compliance-catalog.html`.
+The generated HTML file will land in `dist/tracemap.html`.
 
 Only this README and `.gitkeep` are tracked in the repository. Every `.yaml` file in this directory is ignored.

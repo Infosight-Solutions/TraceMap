@@ -1,4 +1,4 @@
-# Compliance Catalog
+# TraceMap
 
 A static HTML compliance catalog generator for regulated environments.
 
@@ -18,13 +18,13 @@ Compliance evidence is easier to consume when it is navigable rather than pagina
 ## Getting started
 
 ```bash
-git clone https://github.com/<your-username>/compliance-catalog.git
-cd compliance-catalog
+git clone https://github.com/<your-username>/tracemap.git
+cd tracemap
 npm install
 npm run build:example
 ```
 
-Open `dist/compliance-catalog-example.html` in any browser to see a working example built from NIST SP 800-171 Rev 3 controls.
+Open `dist/tracemap-example.html` in any browser to see a working example built from NIST SP 800-171 Rev 3 controls.
 
 To build against your own data, copy the example files to `data/` and edit them:
 
@@ -33,7 +33,7 @@ cp data-example/*.yaml data/
 npm run build
 ```
 
-The generated file lands in `dist/compliance-catalog.html`. The `data/` directory is gitignored by default so private compliance data never enters the repository.
+The generated file lands in `dist/tracemap.html`. The `data/` directory is gitignored by default so private compliance data never enters the repository.
 
 ## Data schema
 
@@ -45,7 +45,7 @@ Five YAML files describe your compliance landscape. See `data-example/` for a wo
 - **mappings.yaml**: obligation-to-documents mappings with verification status
 - **roles.yaml**: accountable roles under your governance model
 
-Each document declares which of the four compliance layers it belongs to (requirement, design, specification, verification), and each obligation-to-document mapping can override that if needed. Verification status uses three values matching the ISMS-ART model: `verified`, `deviations_noted`, `verification_pending`.
+Each document declares which of the four compliance layers it belongs to (requirement, design, specification, verification), and each obligation-to-document mapping can override that if needed. Mapping status uses four values: `verified`, `deviations_noted`, `verification_pending`, `not_assessed`.
 
 ## URL formats
 
@@ -56,9 +56,7 @@ Any URL scheme is supported. Common examples:
 - SharePoint: `https://tenant.sharepoint.com/sites/site/Documents/file.docx`
 - Any HTTPS URL to a document management system, wiki, or web resource
 
-Each document entry can optionally include both a `projectwise_url` (native protocol) and a `projectwise_web_url` (browser-accessible fallback). The catalog renders an "Open" button for the native URL and a "Web" button for the web URL when both are present.
-
-The tool itself never opens these URLs. It only renders them as clickable links. When a reader clicks a link, their browser routes the URL to whichever handler is registered for the protocol (ProjectWise Explorer for pw://, the browser itself for https://). Authentication happens between the reader's existing session and the destination system, with the tool never involved.
+The tool never opens these URLs. It renders them as clickable links; the browser routes each URL to whatever handler is registered for that protocol. Authentication is between the reader's existing session and the destination system.
 
 ## Extending beyond compliance
 

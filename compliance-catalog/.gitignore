@@ -1,6 +1,6 @@
 node_modules/
 dist/*
-!dist/compliance-catalog-example.html
+!dist/tracemap-example.html
 data/*
 !data/README.md
 !data/.gitkeep

@@ -6,7 +6,7 @@
 #                    certified_to     voluntary standard with certification or attestation
 #                    aligned_with     framework the organization follows
 #                    implements       technical guidance adopted as a baseline
-#                    supports_client  listed for context only; no coverage is tracked
+#                    context          listed for context only; no coverage is tracked
 # applies_if       "always", or ids from catalog.yaml applicability
 # total_obligations  how many requirements are in scope, even if not all are listed yet
 # key_dates        date (YYYY-MM-DD), optional date_text to display instead,

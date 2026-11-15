@@ -1,7 +1,7 @@
 {
-  "name": "compliance-catalog",
+  "name": "tracemap",
   "version": "0.2.0",
-  "description": "Static, single-file HTML compliance catalog generated from YAML data",
+  "description": "Static, single-file HTML compliance catalog generator — YAML data in, self-contained HTML out",
   "main": "build.js",
   "scripts": {
     "build": "node build.js --data data",

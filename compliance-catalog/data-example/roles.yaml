@@ -3,13 +3,9 @@
 roles:
   - id: ciso
     name: Chief Information Security Officer
-    scope: Security program, policies, and standards
   - id: dpo
     name: Data Protection Officer
-    scope: Privacy obligations and personal data
   - id: general_counsel
     name: General Counsel
-    scope: Legal and regulatory disclosure
   - id: it_ops
     name: IT Operations Manager
-    scope: Access administration, logging, and infrastructure

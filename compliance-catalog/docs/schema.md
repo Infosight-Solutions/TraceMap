@@ -122,6 +122,7 @@ Top-level key: `regulations` (list).
 | `reg_document` | document ID | Link to a reference document (e.g., full regulation text). Must exist in `documents.yaml`. Enables the "Open [reg_doc_label]" button. |
 | `source_url` | URL string | Link to the external official source. Shown as "Official source" button (opens in new tab). |
 | `accountable_role` | role ID | Must exist in `roles.yaml`. Shown as "Not sure? Ask the [role]." |
+| `condition` | string | Short phrase shown as a tag badge on the regulation row in the crosswalk table (e.g. "EU personal data"). Useful for signaling applicability at a glance. |
 | `applies_when` | list of strings | Checklist in "Does this apply to my work?" Rendered through glossary substitution. |
 | `does_not_apply` | list of strings | Exclusions panel alongside `applies_when`. |
 | `context_note` | string | Shown instead of coverage stats when `obligation_type: context`. |
@@ -399,7 +400,7 @@ deviations noted = amber, verification pending = red, not assessed = gray dashed
 **Types**
 - Boolean fields (`restricted`, `official_wording`, `pending`, `in_table`) accept YAML's native `true`/`false`. Quoted strings (`"true"`) are truthy but not recommended.
 - `review_interval_days` must be a YAML integer (unquoted). Quoted strings will be treated as falsy in the interval calculation.
-- Empty strings on required fields (e.g., `title: ""`) pass validation — the check is `!value`, which is truthy for empty strings in JS.
+- Whitespace-only strings on required fields (e.g., `title: "   "`) are treated as missing and produce a build error. Plain empty strings (`title: ""`) are also caught.
 
 **Text rendering**
 - `summary`, `context_note`, `plain_summary`, `applies_when` items, `does_not_apply` items, `topic.summary`, and `topic.applies_to_you` items are rendered through the glossary substitution engine.

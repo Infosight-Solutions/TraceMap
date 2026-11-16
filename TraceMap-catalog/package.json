@@ -8,7 +8,8 @@
     "build:example": "node build.js --data data-example",
     "generate-template": "node scripts/generate-template.js",
     "generate-template:example": "node scripts/generate-template.js --catalog data-example/catalog.yaml",
-    "generate-template:fixture": "node scripts/generate-template.js --catalog data-example/catalog.yaml --populate data-example --out data-example/tracemap-example.xlsx"
+    "generate-template:fixture": "node scripts/generate-template.js --catalog data-example/catalog.yaml --populate data-example --out data-example/tracemap-example.xlsx",
+    "import": "node scripts/import-xlsx.js"
   },
   "license": "MIT",
   "dependencies": {

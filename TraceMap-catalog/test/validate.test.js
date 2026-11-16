@@ -44,6 +44,18 @@ test('missing required field is located on its record', () => {
   assert.equal(e.expected, 'a value (required)');
 });
 
+test('empty or whitespace-only strings count as missing for required fields', () => {
+  for (const blank of ['', '   ']) {
+    const d = fresh();
+    d.regulations[1].name = blank;
+    d.obligations[0].title = blank;
+    d.mappings[0].documents[0].document_id = blank;
+    const { errors } = validate(d);
+    const missing = errors.filter(i => i.expected === 'a value (required)').map(i => `${i.entity}.${i.field}`);
+    assert.deepEqual(missing.sort(), ['mappings.document_id', 'obligations.title', 'regulations.name'], JSON.stringify(blank));
+  }
+});
+
 test('orphan references are errors with the referenced sheet named', () => {
   const d = fresh();
   d.obligations[0].regulation_id = 'ghost';

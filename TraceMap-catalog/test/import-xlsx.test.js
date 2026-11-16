@@ -64,6 +64,42 @@ test('imported YAML builds with build.js', t => {
   assert.equal(res.status, 0, res.stderr);
 });
 
+// Splits a built page into the embedded data object and the rest of the HTML around it.
+function splitBuiltPage(html) {
+  const start = 'window.TRACEMAP_DATA = ';
+  const i = html.indexOf(start);
+  const j = html.indexOf(';\n</script>', i);
+  assert.ok(i >= 0 && j > i, 'built page has no embedded data block');
+  return { shell: html.slice(0, i) + html.slice(j), data: JSON.parse(html.slice(i + start.length, j)) };
+}
+
+test('end to end: imported YAML builds the same HTML as the source YAML', t => {
+  const dir = tempDir(t);
+  const yamlDir = path.join(dir, 'imported');
+  assert.equal(importFile(FIXTURE, yamlDir).status, 0);
+  fs.copyFileSync(EXAMPLE_CATALOG, path.join(yamlDir, 'catalog.yaml'));
+
+  const build = (dataDir, out) => {
+    const res = run('build.js', ['--data', dataDir, '--out', out]);
+    assert.equal(res.status, 0, res.stderr);
+    return splitBuiltPage(fs.readFileSync(out, 'utf8'));
+  };
+  const source = build(EXAMPLE_DIR, path.join(dir, 'source.html'));
+  const imported = build(yamlDir, path.join(dir, 'imported.html'));
+
+  // Everything outside the data (app code, styles, page title) must be byte-identical.
+  assert.equal(imported.shell, source.shell);
+
+  // The data must match once the per-build stamp (time, folder name) is set aside and trailing
+  // whitespace from YAML '>' blocks is trimmed (the known cosmetic loss).
+  for (const page of [source, imported]) {
+    assert.ok(page.data.build_metadata && page.data.build_metadata.built_at, 'build stamp present');
+    delete page.data.build_metadata;
+  }
+  // Trimmed on both sides: catalog.yaml is copied as-is, so its own '>' blocks keep their newline.
+  assert.deepEqual(trimTrailing(imported.data), trimTrailing(source.data));
+});
+
 test('nested sheets fold into parents in row order, without the foreign key', t => {
   const out = tempDir(t);
   assert.equal(importFile(FIXTURE, out).status, 0);
@@ -152,6 +188,57 @@ test('errors: report lists sheet/row/column, no YAML written, exit 1', async t =
     '| Reg_Key_Dates | 3 | Pending | `maybe` | `TRUE or FALSE` |',
     '| Regulations | 4 | Total Obligations | `-1` | `a whole number, 0 or greater` |',
   ]) assert.ok(report.includes(row), `report is missing: ${row}\n\n${report}`);
+});
+
+test('duplicate mapping: a second Mappings row for one obligation is reported at that row', async t => {
+  const dir = tempDir(t);
+  let dupRow;
+  let oblId;
+  const file = await editWorkbook(FIXTURE, path.join(dir, 'dup-mapping.xlsx'), wb => {
+    const ws = wb.getWorksheet('Mappings');
+    const h = headerIndex(ws);
+    oblId = ws.getCell(2, h['Obligation ID']).value;
+    dupRow = ws.rowCount + 1;
+    ws.getCell(dupRow, h['Obligation ID']).value = oblId;
+    ws.getCell(dupRow, h.Status).value = 'verified';
+  });
+  const out = path.join(dir, 'out');
+  const res = importFile(file, out);
+  assert.equal(res.status, 1);
+  assert.deepEqual(writtenYaml(out), []);
+  const report = fs.readFileSync(path.join(out, 'import-report.md'), 'utf8');
+  const row = `| Mappings | ${dupRow} | Obligation ID | \`${oblId}\` | \`each obligation on one Mappings row only\` |`;
+  assert.ok(report.includes(row), `report is missing: ${row}\n\n${report}`);
+});
+
+test('unknown column: warned on row 1, ignored, and the import succeeds', async t => {
+  const dir = tempDir(t);
+  const file = await editWorkbook(FIXTURE, path.join(dir, 'extra-col.xlsx'), wb => {
+    const ws = wb.getWorksheet('Roles');
+    const col = ws.columnCount + 1;
+    ws.getCell(1, col).value = 'Owner Notes';
+    ws.getCell(2, col).value = 'ask HR';
+  });
+  const out = path.join(dir, 'out');
+  const res = importFile(file, out);
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /Roles row 1, Owner Notes: Unrecognized column; its values are ignored/);
+  assert.deepEqual(readYaml(path.join(out, 'roles.yaml')).roles, loadData(EXAMPLE_DIR).roles);
+});
+
+test('duplicate column: error on row 1 and no YAML written', async t => {
+  const dir = tempDir(t);
+  const file = await editWorkbook(FIXTURE, path.join(dir, 'dup-col.xlsx'), wb => {
+    const ws = wb.getWorksheet('Mappings');
+    ws.getCell(1, ws.columnCount + 1).value = 'Status';
+  });
+  const out = path.join(dir, 'out');
+  const res = importFile(file, out);
+  assert.equal(res.status, 1);
+  assert.deepEqual(writtenYaml(out), []);
+  const report = fs.readFileSync(path.join(out, 'import-report.md'), 'utf8');
+  const row = '| Mappings | 1 | Status | (blank) | `one "Status" column (it appears twice)` |';
+  assert.ok(report.includes(row), `report is missing: ${row}\n\n${report}`);
 });
 
 test('warnings: listed by sheet/row and the import still succeeds', async t => {

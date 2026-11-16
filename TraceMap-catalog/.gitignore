@@ -5,6 +5,7 @@ data/*
 !data/README.md
 !data/.gitkeep
 *.log
+import-report.md
 .DS_Store
 .env
 .vscode/

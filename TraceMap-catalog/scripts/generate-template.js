@@ -39,6 +39,9 @@ const MAX_WIDTH = 60;
 
 const DATE_FMT = 'yyyy-mm-dd';
 
+// The importer detects the example row by this exact A2 note text; keep the two in sync.
+const EXAMPLE_NOTE = 'EXAMPLE ROW — delete before importing';
+
 // Sheets in which a column with key 'layer' gets the catalog's layer dropdown.
 const LAYER_SHEETS = ['Documents', 'Mapping_Docs'];
 
@@ -238,6 +241,82 @@ function exampleFor(sheet, cols, { layers }) {
   return ex;
 }
 
+// ---------- --populate: YAML records -> sheet rows ----------
+
+// File and top-level key per top-level sheet. Reg_Key_Dates and Mapping_Docs are flattened
+// from nested lists (regulation.key_dates[], mapping.documents[]), not read from their own files.
+const SOURCES = {
+  Regulations: ['regulations.yaml', 'regulations'],
+  Obligations: ['obligations.yaml', 'obligations'],
+  Mappings:    ['mappings.yaml',    'mappings'],
+  Documents:   ['documents.yaml',   'documents'],
+  Topics:      ['topics.yaml',      'topics'],
+  Controls:    ['controls.yaml',    'controls'],
+  Roles:       ['roles.yaml',       'roles'],
+  Glossary:    ['glossary.yaml',    'glossary'],
+};
+
+// Nested lists that become their own sheets; not reported as unmapped fields.
+const NESTED = { Regulations: 'key_dates', Mappings: 'documents' };
+
+// js-yaml turns YYYY-MM-DD into Date objects; turn them back into ISO strings (same as build.js).
+function normalizeDates(node) {
+  if (Array.isArray(node)) return node.map(normalizeDates);
+  if (node instanceof Date) return node.toISOString().slice(0, 10);
+  if (node && typeof node === 'object') {
+    const out = {};
+    for (const k of Object.keys(node)) out[k] = normalizeDates(node[k]);
+    return out;
+  }
+  return node;
+}
+
+function loadList(dir, file, key) {
+  const p = path.join(dir, file);
+  if (!fs.existsSync(p)) {
+    console.warn(`  warning: ${p} not found; its sheet will be empty`);
+    return [];
+  }
+  let doc;
+  try {
+    doc = yaml.load(fs.readFileSync(p, 'utf8')) || {};
+  } catch (e) {
+    fail(`YAML syntax error in ${p}:\n  ${e.message}`);
+  }
+  const list = normalizeDates(doc)[key];
+  if (list == null) return [];
+  if (!Array.isArray(list)) fail(`${p}: top-level key "${key}" must be a list`);
+  return list;
+}
+
+// Returns { sheetName: [record, ...] } for every entity sheet, in source YAML order.
+function loadRecords(dir) {
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) fail(`--populate directory not found: ${dir}`);
+  const records = {};
+  for (const [sheet, [file, key]] of Object.entries(SOURCES)) records[sheet] = loadList(dir, file, key);
+
+  records.Reg_Key_Dates = [];
+  for (const r of records.Regulations) {
+    for (const kd of r.key_dates || []) records.Reg_Key_Dates.push({ regulation_id: r.id, ...kd });
+  }
+  records.Mapping_Docs = [];
+  for (const m of records.Mappings) {
+    for (const d of m.documents || []) records.Mapping_Docs.push({ obligation_id: m.obligation_id, ...d });
+  }
+  return records;
+}
+
+// Lists fields present in the YAML that have no column, so data loss is visible, not silent.
+function reportUnmappedFields(sheet, cols, rows) {
+  const known = new Set(cols.map(c => c.key));
+  if (NESTED[sheet]) known.add(NESTED[sheet]);
+  const unknown = new Map();
+  for (const row of rows) {
+    for (const k of Object.keys(row || {})) if (!known.has(k)) unknown.set(k, (unknown.get(k) || 0) + 1);
+  }
+  for (const [k, n] of unknown) console.warn(`  warning: ${sheet}: field "${k}" has no column; dropped from ${n} record(s)`);
+}
+
 // ---------- cell helpers ----------
 
 function headerText(col) {
@@ -260,11 +339,21 @@ function headerNote(col) {
 
 function toCellValue(col, v) {
   if (v === undefined || v === null || v === '') return null;
-  if (col.type === 'date') {
-    const [y, m, d] = String(v).split('-').map(Number);
-    return new Date(Date.UTC(y, m - 1, d));
+  switch (col.type) {
+    case 'date': {
+      const [y, m, d] = String(v).split('-').map(Number);
+      return new Date(Date.UTC(y, m - 1, d));
+    }
+    case 'pipe_list':
+      return Array.isArray(v) ? v.join(' | ') : String(v); // a scalar such as applies_if: always
+    case 'boolean':
+      return v === true || v === 'true' || v === 'TRUE';
+    case 'integer':
+      return Number(v);
+    default:
+      // Folded YAML scalars (>) end in a newline; drop trailing whitespace so cells stay clean.
+      return typeof v === 'string' ? v.replace(/\s+$/, '') : v;
   }
-  return v;
 }
 
 function displayLength(col, v) {
@@ -340,9 +429,16 @@ const SHEET_PROTECTION = {
 
 // ---------- entity sheets ----------
 
-function addEntitySheet(wb, sheet, catalogInfo) {
+// Blank template: row 2 is the styled example row, with the A2 note the importer looks for.
+// Populated (--populate, records is an array): no example row; records start at row 2.
+// The importer skips row 2 only when the A2 note is present, so both layouts import correctly.
+function addEntitySheet(wb, sheet, catalogInfo, records) {
   const cols = columnsFor(sheet, catalogInfo);
-  const example = exampleFor(sheet, cols, catalogInfo);
+  const populating = Array.isArray(records);
+  if (populating) reportUnmappedFields(sheet, cols, records);
+  const rows = populating ? records : [exampleFor(sheet, cols, catalogInfo)];
+  const lastDataRow = Math.max(HEADER_ROW + 1, HEADER_ROW + rows.length);
+  const lastRow = Math.max(LAST_ROW, lastDataRow + 500);
   const ws = wb.addWorksheet(sheet, { views: [{ state: 'frozen', ySplit: HEADER_ROW }] });
 
   cols.forEach((col, i) => {
@@ -354,7 +450,8 @@ function addEntitySheet(wb, sheet, catalogInfo) {
     column.protection = { locked: false };
     if (col.type === 'date') column.numFmt = DATE_FMT;
 
-    const width = Math.max(headerText(col).length + 2, displayLength(col, example[col.key]) + 2);
+    const contentLen = Math.max(0, ...rows.map(r => displayLength(col, toCellValue(col, r[col.key]))));
+    const width = Math.max(headerText(col).length + 2, contentLen + 2);
     column.width = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, width));
 
     // Header
@@ -367,31 +464,34 @@ function addEntitySheet(wb, sheet, catalogInfo) {
     h.protection = { locked: true };
     h.note = headerNote(col);
 
-    // Example row
-    const e = ws.getCell(EXAMPLE_ROW, colIdx);
-    e.value = toCellValue(col, example[col.key]);
-    e.font = { italic: true, color: { argb: EXAMPLE_GRAY } };
-    e.protection = { locked: false };
-    if (col.type === 'date') e.numFmt = DATE_FMT;
+    // Example row or populated records, from row 2. Facet columns are ordinary columns here:
+    // col.key is the facet field name, read from the record like any other.
+    rows.forEach((rec, r) => {
+      const c = ws.getCell(EXAMPLE_ROW + r, colIdx);
+      c.value = toCellValue(col, rec[col.key]);
+      c.protection = { locked: false };
+      if (col.type === 'date') c.numFmt = DATE_FMT;
+      if (!populating) c.font = { italic: true, color: { argb: EXAMPLE_GRAY } };
+    });
 
     // Validation
     const v = validationFor(col);
     if (v) {
       const letter = column.letter;
-      ws.dataValidations.add(`${letter}${EXAMPLE_ROW}:${letter}${LAST_ROW}`, v);
+      ws.dataValidations.add(`${letter}${EXAMPLE_ROW}:${letter}${lastRow}`, v);
     }
   });
 
   ws.getRow(HEADER_ROW).height = 20;
-  ws.getCell(EXAMPLE_ROW, 1).note = 'EXAMPLE ROW — delete before importing';
-  ws.autoFilter = { from: { row: HEADER_ROW, column: 1 }, to: { row: HEADER_ROW, column: cols.length } };
+  if (!populating) ws.getCell(EXAMPLE_ROW, 1).note = EXAMPLE_NOTE;
+  ws.autoFilter = { from: { row: HEADER_ROW, column: 1 }, to: { row: lastDataRow, column: cols.length } };
 
-  return { ws, cols };
+  return { ws, cols, rowCount: populating ? rows.length : 0 };
 }
 
 // ---------- Instructions sheet ----------
 
-function addInstructionsSheet(wb, built, catalogPath) {
+function addInstructionsSheet(wb, built, catalogPath, populated) {
   const ws = wb.addWorksheet('Instructions');
   ws.getColumn(1).width = 3;
   ws.getColumn(2).width = 24;
@@ -438,8 +538,12 @@ function addInstructionsSheet(wb, built, catalogPath) {
   heading('How each tab is laid out');
   para('Row 1', 'Column headers. Locked. Hover a header to see what the field means and what values it accepts.');
   para('Required columns', 'Header ends in * and has a yellow fill. Optional columns have a white header.');
-  para('Row 2', 'Example row in gray italics. Delete it before importing.');
-  para('Row 3 onward', 'Your data. One record per row.');
+  if (populated) {
+    para('Row 2 onward', 'Data, one record per row. This workbook was filled from existing YAML files, so it has no example row.');
+  } else {
+    para('Row 2', 'Example row in gray italics. Delete it before importing (the importer also skips it automatically).');
+    para('Row 3 onward', 'Your data. One record per row.');
+  }
   para('Dropdowns', 'Columns with a fixed set of values (types, statuses, layers, facets, TRUE/FALSE) offer a dropdown and reject other values.');
   r += 1;
 
@@ -471,13 +575,12 @@ function addInstructionsSheet(wb, built, catalogPath) {
 
 async function main() {
   const args = parseArgs(process.argv);
-  if (args.populate) {
-    fail('--populate is not implemented yet');
-  }
 
   const catalogPath = path.resolve(ROOT, args.catalog);
   const outPath = path.resolve(ROOT, args.out);
   const catalogInfo = loadCatalog(catalogPath);
+  const records = args.populate ? loadRecords(path.resolve(ROOT, args.populate)) : null;
+  const counts = [];
 
   const wb = new ExcelJS.Workbook();
   wb.creator = 'TraceMap';
@@ -493,11 +596,12 @@ async function main() {
 
   for (const sheet of SHEET_ORDER) {
     if (sheet === 'Instructions') {
-      const ws = addInstructionsSheet(wb, planned, args.catalog);
+      const ws = addInstructionsSheet(wb, planned, args.catalog, Boolean(records));
       await ws.protect('', { selectLockedCells: true, selectUnlockedCells: true });
     } else {
-      const { ws } = addEntitySheet(wb, sheet, catalogInfo);
+      const { ws, rowCount } = addEntitySheet(wb, sheet, catalogInfo, records ? records[sheet] : undefined);
       await ws.protect('', SHEET_PROTECTION);
+      counts.push([sheet, rowCount]);
     }
   }
 
@@ -509,6 +613,10 @@ async function main() {
   console.log(`  template version ${TEMPLATE_VERSION}; ${SHEET_ORDER.length} sheets`);
   console.log(`  layers: ${catalogInfo.layers.join(', ')}`);
   console.log(`  facets: ${catalogInfo.facets.map(f => f.field).join(', ') || '(none)'}`);
+  if (records) {
+    console.log(`  populated from ${path.relative(process.cwd(), path.resolve(ROOT, args.populate)) || args.populate} (no example row; data from row 2):`);
+    for (const [sheet, n] of counts) console.log(`    ${sheet.padEnd(14)} ${String(n).padStart(4)} rows`);
+  }
 }
 
 main().catch(err => {

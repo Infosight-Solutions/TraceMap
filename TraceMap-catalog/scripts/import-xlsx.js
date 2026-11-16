@@ -23,12 +23,12 @@ const yaml = require('js-yaml');
 const ExcelJS = require('exceljs');
 const { COLUMNS, SHEET_ORDER, TEMPLATE_VERSION } = require('../lib/schema');
 const { validate } = require('../lib/validate');
+const { REPORT_NAME, mdCell, mdCode, stamp, renderReport: renderMarkdown } = require('../lib/report');
 
 const ROOT = path.resolve(__dirname, '..');
 
 // Must match EXAMPLE_NOTE in generate-template.js exactly.
 const EXAMPLE_NOTE = 'EXAMPLE ROW — delete before importing';
-const REPORT_NAME = 'import-report.md';
 
 // Top-level sheets -> key in the data object and output file.
 const ENTITIES = {
@@ -98,7 +98,9 @@ function checkVersion(wb) {
   }
   if (found.major !== expected.major) {
     fatal(`template version ${found.text} is not compatible with this importer (expects ${TEMPLATE_VERSION}). ` +
-      'Run "npm run generate-template" for a new template, then "npm run export-xlsx" to move your data into it.');
+      'Run "npm run export-xlsx" to get a current-version workbook filled from your existing YAML ' +
+      '(add "-- --populate <data-dir>" for a folder other than data/), then copy over any edits from this ' +
+      'workbook that were never imported. For a blank workbook, run "npm run generate-template".');
   }
   return { found, expected, olderMinor: found.minor < expected.minor, newerMinor: found.minor > expected.minor };
 }
@@ -284,53 +286,31 @@ function byLocation(a, b) {
   return (typeof a.row === 'number' ? a.row : 0) - (typeof b.row === 'number' ? b.row : 0);
 }
 
-// Table cells: escape pipes, collapse newlines, show values as code.
-const mdCell = s => String(s == null ? '' : s).replace(/\r?\n/g, ' ').replace(/\|/g, '\\|');
-const mdCode = s => (s === '' || s == null ? '(blank)' : '`' + mdCell(s).replace(/`/g, "'") + '`');
-
 // Paths for messages: relative when inside the working directory, absolute otherwise.
 function rel(p) {
   const r = path.relative(process.cwd(), p);
   return !r ? p : r.startsWith('..') ? p : r;
 }
 
-function pad2(n) { return String(n).padStart(2, '0'); }
-function stamp(d) {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-}
-
 function renderReport(report, { file, versionInfo }) {
-  const errs = [...report.errors].sort(byLocation);
-  const warns = [...report.warnings].sort(byLocation);
-  const lines = [
-    '# TraceMap Import Report',
-    '',
-    `**Generated:** ${stamp(new Date())}`,
-    `**File:** ${file}`,
-    `**Template version:** ${versionInfo.found.text} (expected ${TEMPLATE_VERSION})`,
-    '',
-    '## Summary',
-    '',
-    `${errs.length} error${errs.length === 1 ? '' : 's'} — ${errs.length ? 'import aborted, no files written' : 'none'}`,
-    `${warns.length} warning${warns.length === 1 ? '' : 's'} — ${errs.length ? 'import would succeed once errors are fixed; review before distributing' : 'review before distributing'}`,
-    '',
-    '## Errors',
-    '',
-  ];
-  if (errs.length) {
-    lines.push('| Sheet | Row | Column | Value | Expected |', '|---|---|---|---|---|');
-    for (const e of errs) lines.push(`| ${mdCell(e.sheet)} | ${mdCell(e.row)} | ${mdCell(e.column)} | ${mdCode(e.value)} | ${mdCode(e.expected)} |`);
-  } else {
-    lines.push('None.');
-  }
-  lines.push('', '## Warnings', '');
-  if (warns.length) {
-    lines.push('| Sheet | Row | Column | Note |', '|---|---|---|---|');
-    for (const w of warns) lines.push(`| ${mdCell(w.sheet)} | ${mdCell(w.row)} | ${mdCell(w.column)} | ${mdCell(w.note)} |`);
-  } else {
-    lines.push('None.');
-  }
-  return lines.join('\n') + '\n';
+  return renderMarkdown({
+    title: 'TraceMap Import Report',
+    meta: [
+      ['Generated', stamp()],
+      ['File', file],
+      ['Template version', `${versionInfo.found.text} (expected ${TEMPLATE_VERSION})`],
+    ],
+    errors: [...report.errors].sort(byLocation),
+    warnings: [...report.warnings].sort(byLocation),
+    errorColumns: [
+      ['Sheet', e => mdCell(e.sheet)], ['Row', e => mdCell(e.row)], ['Column', e => mdCell(e.column)],
+      ['Value', e => mdCode(e.value)], ['Expected', e => mdCode(e.expected)],
+    ],
+    warningColumns: [
+      ['Sheet', w => mdCell(w.sheet)], ['Row', w => mdCell(w.row)], ['Column', w => mdCell(w.column)],
+      ['Note', w => mdCell(w.note)],
+    ],
+  });
 }
 
 // ---------- main ----------

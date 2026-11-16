@@ -7,6 +7,12 @@
  *   node scripts/generate-template.js                                   # data/catalog.yaml
  *   node scripts/generate-template.js --catalog data-example/catalog.yaml
  *   node scripts/generate-template.js --out dist/my-template.xlsx
+ *   node scripts/generate-template.js --populate data                   # export existing YAML
+ *
+ * --populate <data-dir> fills the workbook from that folder's YAML (no example row). This is
+ * also what "npm run export-xlsx" runs. The YAML is validated first with the same validate()
+ * build.js uses; on errors, import-report.md is written to <data-dir> and no workbook is written.
+ * With --populate and no --catalog, the catalog is <data-dir>/catalog.yaml.
  *
  * Static column definitions come from lib/schema.js. Two things come from catalog.yaml at
  * generation time, because each organization defines its own:
@@ -19,6 +25,8 @@ const path = require('path');
 const yaml = require('js-yaml');
 const ExcelJS = require('exceljs');
 const { COLUMNS, SHEET_ORDER, TEMPLATE_VERSION } = require('../lib/schema');
+const { validate, formatIssue } = require('../lib/validate');
+const { REPORT_NAME, mdCell, mdCode, stamp, renderReport } = require('../lib/report');
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -164,24 +172,44 @@ const SHEET_DESCRIPTIONS = {
 
 // ---------- CLI ----------
 
+const USAGE = `Usage: node scripts/generate-template.js [--catalog <path>] [--out <path>] [--populate <data-dir>]
+
+  --catalog <path>       catalog.yaml supplying facet columns and layer dropdowns
+                         (default: data/catalog.yaml, or <data-dir>/catalog.yaml with --populate)
+  --out <path>           workbook to write (default: dist/tracemap-template.xlsx)
+  --populate <data-dir>  fill the workbook from the YAML files in <data-dir> instead of an example row.
+                         The YAML is validated first; on errors, ${REPORT_NAME} is written to <data-dir>
+                         and no workbook is written. "npm run export-xlsx" runs this for data/
+                         (writing dist/tracemap-export.xlsx); use "npm run export-xlsx -- --populate <data-dir>"
+                         for another folder.
+
+Later flags override earlier ones, so npm script defaults can be overridden after "--".`;
+
 function parseArgs(argv) {
   const args = {
-    catalog: 'data/catalog.yaml',
+    catalog: null,
     out: 'dist/tracemap-template.xlsx',
     populate: null,
   };
-  for (let i = 2; i < argv.length; i++) {
+  const value = flag => {
+    const v = argv[++i];
+    if (v === undefined || v.startsWith('--')) fail(`${flag} needs a value\n\n${USAGE}`);
+    return v;
+  };
+  let i;
+  for (i = 2; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--catalog') args.catalog = argv[++i];
-    else if (a === '--out') args.out = argv[++i];
-    else if (a === '--populate') args.populate = argv[++i];
+    if (a === '--catalog') args.catalog = value(a);
+    else if (a === '--out') args.out = value(a);
+    else if (a === '--populate') args.populate = value(a);
     else if (a === '-h' || a === '--help') {
-      console.log('Usage: node scripts/generate-template.js [--catalog <path>] [--out <path>] [--populate <data-dir>]');
+      console.log(USAGE);
       process.exit(0);
     } else {
-      fail(`Unknown argument: ${a}`);
+      fail(`Unknown argument: ${a}\n\n${USAGE}`);
     }
   }
+  if (!args.catalog) args.catalog = args.populate ? path.join(args.populate, 'catalog.yaml') : 'data/catalog.yaml';
   return args;
 }
 
@@ -194,7 +222,12 @@ function fail(msg) {
 
 function loadCatalog(file) {
   if (!fs.existsSync(file)) fail(`catalog not found: ${file}`);
-  const catalog = yaml.load(fs.readFileSync(file, 'utf8')) || {};
+  let catalog;
+  try {
+    catalog = normalizeDates(yaml.load(fs.readFileSync(file, 'utf8')) || {});
+  } catch (e) {
+    fail(`YAML syntax error in ${file}:\n  ${e.message}`);
+  }
   const layers = (catalog.layers || []).map(l => l.id).filter(Boolean);
   if (!layers.length) fail(`${file} defines no layers[]; the layer dropdowns need at least one`);
   const facets = (catalog.facets || []).map(f => ({
@@ -202,7 +235,7 @@ function loadCatalog(file) {
     label: f.label || f.field,
     values: Object.keys(f.values || {}),
   }));
-  return { layers, facets };
+  return { layers, facets, catalog };
 }
 
 // Returns the full column list for a sheet: static COLUMNS plus catalog-driven additions.
@@ -564,11 +597,57 @@ function addInstructionsSheet(wb, built, catalogPath, populated) {
   r += 1;
 
   heading('Importing');
-  para('Run', 'From the TraceMap-catalog folder: node scripts/import-xlsx.js <this-file.xlsx>  (writes YAML into data/). Then npm run build.');
+  para('Run', 'From the TraceMap-catalog folder: npm run import -- --file <this-file.xlsx>  (writes YAML into data/). Then npm run build. ' +
+    'If anything is wrong, no YAML is written and import-report.md lists each problem by tab, row, and column.');
   para('Version check', 'The importer reads the template version in C2. A different major version is refused; a different minor version produces a warning.');
 
   for (let i = 4; i < r; i++) ws.getRow(i).alignment = { wrapText: true, vertical: 'top' };
   return ws;
+}
+
+// ---------- validation before export ----------
+
+// Runs the build's validate() on the YAML being exported. On errors: writes the report into the
+// data folder, prints a summary, exits 1, and no workbook is written. Warnings print and continue.
+function checkBeforeExport(records, catalog, args) {
+  const data = { catalog };
+  for (const [sheet, [, key]] of Object.entries(SOURCES)) data[key] = records[sheet];
+  const { errors, warnings } = validate(data);
+  const dataDir = path.resolve(ROOT, args.populate);
+  const reportPath = path.join(dataDir, REPORT_NAME);
+
+  for (const w of warnings) console.warn(`  warning: ${formatIssue(w)}`);
+  if (!errors.length) {
+    // A report from an earlier failed run no longer describes this data.
+    if (fs.existsSync(reportPath)) fs.unlinkSync(reportPath);
+    return;
+  }
+
+  // 'regulations.yaml "soc2" key_dates entry 1' -> '"soc2" key_dates entry 1'
+  const entry = i => (i.where.startsWith(i.file) ? i.where.slice(i.file.length).trim() : i.where) || '—';
+  fs.writeFileSync(reportPath, renderReport({
+    title: 'TraceMap Export Report',
+    action: 'export',
+    outcome: 'no workbook written',
+    meta: [
+      ['Generated', stamp()],
+      ['Data folder', args.populate],
+      ['Catalog', args.catalog],
+      ['Workbook (not written)', args.out],
+    ],
+    errors,
+    warnings,
+    errorColumns: [
+      ['File', e => mdCell(e.file)], ['Entry', e => mdCell(entry(e))], ['Field', e => mdCell(e.field || '')],
+      ['Value', e => mdCode(Array.isArray(e.value) ? e.value.join(' | ') : e.value)], ['Expected', e => mdCode(e.expected || e.message)],
+    ],
+    warningColumns: [
+      ['File', w => mdCell(w.file)], ['Entry', w => mdCell(entry(w))], ['Field', w => mdCell(w.field || '')], ['Note', w => mdCell(w.message)],
+    ],
+  }));
+  console.error(`generate-template: ${errors.length} error(s), ${warnings.length} warning(s) in ${args.populate}. No workbook written.`);
+  console.error(`See ${path.relative(process.cwd(), reportPath).startsWith('..') ? reportPath : path.relative(process.cwd(), reportPath)} for details.`);
+  process.exit(1);
 }
 
 // ---------- main ----------
@@ -580,6 +659,7 @@ async function main() {
   const outPath = path.resolve(ROOT, args.out);
   const catalogInfo = loadCatalog(catalogPath);
   const records = args.populate ? loadRecords(path.resolve(ROOT, args.populate)) : null;
+  if (records) checkBeforeExport(records, catalogInfo.catalog, args);
   const counts = [];
 
   const wb = new ExcelJS.Workbook();

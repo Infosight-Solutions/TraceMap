@@ -108,6 +108,8 @@ The whole document is a single object — no wrapping key.
 | `applicability` | list | *(none)* | Defines the filter checkboxes on the home page. If empty, the applicability panel is hidden. |
 | `group_field` | string | `"category"` | Which facet field to use for default grouping in the regulation library. Should match a `field` in `facets`. |
 | `facets` | list | *(none)* | Custom filter chips shown in the regulation library. `source_type`, timing, and documentation status filters are always present and do not need to be listed here. |
+| `relationship_types` | list | five defaults | Types allowed in `relationships.yaml`. See [relationships.yaml](#10-relationshipsyaml-optional). |
+| `layouts` | map | current layout | Page layout settings. See [Layouts](#layouts) below. |
 
 **Applicability object fields**
 
@@ -126,6 +128,43 @@ The whole document is a single object — no wrapping key.
 | `label` | no | Shown above the chip group. |
 | `values` | yes | Map of `value_key: "Display label"`. Values not in this map are still displayed using the raw key. |
 | `in_table` | no | Boolean. If `true`, adds a column to the regulation library table. |
+
+### Layouts
+
+Every setting is optional. Leaving out `layouts` (or any part of it) keeps the layout as it was
+before these settings existed. Mistakes (an unknown setting, panel, or value) are build errors
+that name the setting.
+
+```yaml
+layouts:
+  index:                              # the home page
+    tiles: [topics]                   # [] hides the topic tiles
+    show_applicability_filters: true  # the "Check everything that applies" panel
+  browse:                             # the regulation library and document list
+    default_group_by: category        # a facet field, date, or id
+    default_sort: sequence            # sequence | name | id
+    show_columns: [name, type, jurisdiction, scope, key_date, coverage]
+    display_mode: list                # list is the only mode so far
+  detail:                             # the regulation page, top to bottom
+    panels: [identity, category_boxes, applies_when, timeline, status, requirements, relationships, evidence]
+  dashboard:                          # reserved; there is no dashboard page yet
+    enabled: false
+    aggregate_by: [status, source_type]
+```
+
+| Setting | Default | Notes |
+|---|---|---|
+| `index.tiles` | `[topics]` | Which tile sections the home page shows. `topics` is the only one so far. |
+| `index.show_applicability_filters` | `true` | |
+| `browse.default_group_by` | `group_field`, else `category` | How the library is grouped when it opens. A facet field becomes the first "Group by" button. |
+| `browse.default_sort` | `sequence` | Order within groups and in the document list. `sequence`: items with a `sequence` first, lowest first, the rest in file order (with no sequences, this is file order). `name`: alphabetical by name or title. `id`: alphabetical by ID. Grouping by key date still sorts by date. Requirements on a regulation page always follow `sequence`. |
+| `browse.show_columns` | `name`, `type`, facets with `in_table: true`, `key_date`, `coverage` | Library table columns, in order. A facet field adds that facet's column. |
+| `browse.display_mode` | `list` | |
+| `detail.panels` | all eight, in the order above | Sections of the regulation page, top to bottom. Leave one out to hide it. An entry can carry options: `- { panel: category_boxes, max_values: 6 }`. Two panels that sit side by side (`applies_when`, `timeline`) share a row when they are next to each other. |
+| `dashboard.enabled` | `false` | Accepted and checked, but has no effect until a dashboard page exists. |
+| `dashboard.aggregate_by` | `[status, source_type]` | `status`, `source_type`, or a facet field. |
+
+`group_field` and `in_table` keep working; they set the defaults above.
 
 ---
 
@@ -528,7 +567,7 @@ deviations noted = amber, verification pending = red, not assessed = gray dashed
 - IDs must be unique within their own file; cross-file collisions (same string as both a regulation ID and document ID) are permitted. In `relationships.yaml`, a shared ID needs a kind prefix (`topic:logging`).
 
 **Ordering**
-- Data is rendered in YAML file order in most views. The engine does not sort except in the timeline (by date) and reviews (by overdue status).
+- Data is rendered in YAML file order in most views, unless `sequence` or `layouts.browse.default_sort` says otherwise. The timeline sorts by date and reviews by overdue status.
 - Obligation `family` groups appear in first-encountered order within the obligations list for that regulation.
 - Facet chip order and regulation group order follow the order of keys in `facets[].values`.
 

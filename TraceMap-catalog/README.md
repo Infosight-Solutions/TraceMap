@@ -55,7 +55,7 @@ Ten YAML files, six required and four optional. `docs/schema.md` is the full fie
 
 | File | Required | What it holds |
 |---|---|---|
-| `catalog.yaml` | yes | Catalog-wide settings: titles and wording, your document layers, applicability questions, filter facets, status labels, default review interval |
+| `catalog.yaml` | yes | Catalog-wide settings: titles and wording, your document layers, applicability questions, filter facets, status labels, default review interval, relationship types, and optional page layouts |
 | `regulations.yaml` | yes | Regulations, standards, and frameworks, with their key dates |
 | `obligations.yaml` | yes | Individual requirements, each belonging to one regulation |
 | `mappings.yaml` | yes | For each requirement: documentation status, rationale, and the documents that address it |

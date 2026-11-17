@@ -27,6 +27,31 @@
     return;
   }
   var C = D.catalog || {};
+  // Layout settings. build.js always embeds a complete, resolved object (lib/layouts.js).
+  var L = C.layouts || {
+    index: { tiles: ['topics'], show_applicability_filters: true },
+    browse: { default_group_by: C.group_field || 'category', default_sort: 'sequence', show_columns: ['name', 'type', 'key_date', 'coverage'], display_mode: 'list' },
+    detail: { panels: [] },
+    dashboard: { enabled: false }
+  };
+  // The facet the library groups by when grouping by category (the first Group by button).
+  var GROUP_FIELD = ['date', 'id'].indexOf(L.browse.default_group_by) < 0 ? L.browse.default_group_by : (C.group_field || 'category');
+
+  // Sort a list the way browse views are configured. sequence: items with a sequence first,
+  // lowest first; the rest keep file order. name / id: alphabetical.
+  function sortItems(list, how, nameOf) {
+    var wrapped = list.map(function (x, i) { return { x: x, i: i }; });
+    wrapped.sort(function (a, b) {
+      if (how === 'name') return nameOf(a.x).localeCompare(nameOf(b.x)) || a.i - b.i;
+      if (how === 'id') return String(a.x.id).localeCompare(String(b.x.id)) || a.i - b.i;
+      var sa = a.x.sequence, sb = b.x.sequence;
+      var ha = typeof sa === 'number', hb = typeof sb === 'number';
+      if (ha && hb && sa !== sb) return sa - sb;
+      if (ha !== hb) return ha ? -1 : 1;
+      return a.i - b.i;
+    });
+    return wrapped.map(function (w) { return w.x; });
+  }
 
   // ------------------------------------------------------------------
   // Indexes
@@ -131,7 +156,7 @@
   var state = {
     applies: {},          // applicability id -> true
     facets: {},           // field -> { value: true }
-    groupBy: 'category',
+    groupBy: L.browse.default_group_by === 'date' || L.browse.default_group_by === 'id' ? L.browse.default_group_by : GROUP_FIELD,
     docLayer: 'all'
   };
   function appliesSelected() { return Object.keys(state.applies).filter(function (k) { return state.applies[k]; }); }
@@ -497,34 +522,52 @@
     return wrap;
   }
 
+  // Library columns, chosen by layouts.browse.show_columns. A facet field shows that facet.
+  var REG_COLUMNS = {
+    name: { head: 'Regulation', cell: function (r) {
+      return el('td', null, el('a', { href: '#/reg/' + enc(r.id), style: 'font-weight:600' }, r.name),
+        el('span', { class: 'sub' }, r.id + (r.full_title && r.full_title !== r.name ? ', ' + r.full_title : '')));
+    } },
+    type: { head: 'Type', cell: function (r) { return el('td', null, SOURCE_TYPE_LABEL[r.source_type] || r.source_type); } },
+    key_date: { head: 'Key date', cell: function (r) {
+      var nd = nextDate(r);
+      return el('td', { style: nd ? 'color:#9A4A00;font-weight:600' : null },
+        nd ? nd.label + ': ' + keyDateText(nd) : (r.date_display || lastDateText(r)));
+    } },
+    coverage: { head: 'Documentation coverage', cell: function (r) {
+      var c = regCoverage(r);
+      return el('td', null, isContext(r) ? el('span', { class: 'pill st-context' }, 'Context only') :
+        el('div', { class: 'stack-sm', style: 'gap:6px' }, bar(c), el('span', { style: 'font-size:13px' }, coverageText(c))));
+    } }
+  };
+  function regColumns() {
+    return (L.browse.show_columns || []).map(function (key) {
+      if (REG_COLUMNS[key]) return REG_COLUMNS[key];
+      var f = (C.facets || []).filter(function (x) { return x.field === key; })[0];
+      if (!f) return null;
+      return { head: f.label || f.field, cell: function (r) {
+        return el('td', null, regValues(r, f.field).map(function (v) { return f.values[v] || v; }).join(', '));
+      } };
+    }).filter(Boolean);
+  }
   function regTable(regs) {
-    var tableFacets = (C.facets || []).filter(function (f) { return f.in_table; });
-    var head = el('tr', null, el('th', null, 'Regulation'), el('th', null, 'Type'),
-      tableFacets.map(function (f) { return el('th', null, f.label); }),
-      el('th', null, 'Key date'), el('th', null, 'Documentation coverage'));
+    var cols = regColumns();
+    var head = el('tr', null, cols.map(function (c) { return el('th', null, c.head); }));
     var tbody = el('tbody');
     var groups = groupRegs(regs);
     groups.forEach(function (g) {
-      if (g.label) tbody.appendChild(el('tr', { class: 'group' }, el('td', { colspan: 4 + tableFacets.length }, g.label)));
+      if (g.label) tbody.appendChild(el('tr', { class: 'group' }, el('td', { colspan: cols.length }, g.label)));
       g.items.forEach(function (r) {
-        var nd = nextDate(r);
-        var c = regCoverage(r);
         tbody.appendChild(el('tr', { class: 'clickable', onClick: function (e) { if (e.target.tagName !== 'A') go('reg/' + enc(r.id)); } },
-          el('td', null, el('a', { href: '#/reg/' + enc(r.id), style: 'font-weight:600' }, r.name),
-            el('span', { class: 'sub' }, r.id + (r.full_title && r.full_title !== r.name ? ', ' + r.full_title : ''))),
-          el('td', null, SOURCE_TYPE_LABEL[r.source_type] || r.source_type),
-          tableFacets.map(function (f) { return el('td', null, regValues(r, f.field).map(function (v) { return f.values[v] || v; }).join(', ')); }),
-          el('td', { style: nd ? 'color:#9A4A00;font-weight:600' : null },
-            nd ? nd.label + ': ' + keyDateText(nd) : (r.date_display || lastDateText(r))),
-          el('td', null, isContext(r) ? el('span', { class: 'pill st-context' }, 'Context only') :
-            el('div', { class: 'stack-sm', style: 'gap:6px' }, bar(c), el('span', { style: 'font-size:13px' }, coverageText(c))))));
+          cols.map(function (c) { return c.cell(r); })));
       });
     });
-    if (!regs.length) tbody.appendChild(el('tr', null, el('td', { colspan: 4 + tableFacets.length, class: 'empty' },
+    if (!regs.length) tbody.appendChild(el('tr', null, el('td', { colspan: cols.length, class: 'empty' },
       'No regulations match these selections. Clear a filter or uncheck an applicability box to see more.')));
     return el('div', { class: 'table-wrap' }, el('table', null, el('caption', { class: 'visually-hidden' }, 'Regulations'), el('thead', null, head), tbody));
   }
   function groupRegs(regs) {
+    regs = sortItems(regs, L.browse.default_sort, function (r) { return r.name; });
     if (state.groupBy === 'date') {
       var sorted = regs.slice().sort(function (a, b) {
         var x = nextDate(a), y = nextDate(b);
@@ -534,7 +577,7 @@
       return [{ label: null, items: sorted }];
     }
     if (state.groupBy === 'id') return [{ label: null, items: regs.slice().sort(function (a, b) { return a.id.localeCompare(b.id); }) }];
-    var field = C.group_field || 'category';
+    var field = GROUP_FIELD;
     var order = [];
     var map = {};
     var defs = (C.facets || []).filter(function (f) { return f.field === field; })[0];
@@ -551,7 +594,8 @@
   function librarySection(showIntro) {
     var regs = filteredRegs();
     var seg = el('div', { class: 'seg', role: 'group', 'aria-label': 'Group by' });
-    [['category', 'Category'], ['date', 'Key date'], ['id', 'ID']].forEach(function (g) {
+    var groupFacet = (C.facets || []).filter(function (f) { return f.field === GROUP_FIELD; })[0];
+    [[GROUP_FIELD, groupFacet && groupFacet.label ? groupFacet.label : 'Category'], ['date', 'Key date'], ['id', 'ID']].forEach(function (g) {
       seg.appendChild(el('button', { type: 'button', 'aria-pressed': state.groupBy === g[0] ? 'true' : 'false',
         onClick: function () { state.groupBy = g[0]; render(true); } }, g[1]));
     });
@@ -600,14 +644,14 @@
         el('h1', { class: 'page-title' }, C.home_heading || 'Find the requirements that apply to your work'),
         el('p', { class: 'lede' }, C.home_intro || 'Start from a plain-language topic or a regulation you already know. Every requirement links to the documents that address it.'),
         form),
-      applicabilityPanel(),
+      L.index.show_applicability_filters ? applicabilityPanel() : null,
       reviewBanner(),
       upcomingPanel(),
-      el('section', { class: 'stack', style: 'gap:20px' },
+      (L.index.tiles || []).indexOf('topics') >= 0 ? el('section', { class: 'stack', style: 'gap:20px' },
         el('div', { class: 'stack-sm' },
           el('h2', { class: 'section-title' }, 'Start with what you are working on'),
           el('p', { class: 'section-intro' }, 'Each topic lists every requirement on that subject, across all regulations, in plain language first.')),
-        topicTiles()),
+        topicTiles()) : null,
       librarySection(true)
     ];
   }
@@ -732,7 +776,7 @@
   function pageReg(id, openObl) {
     var r = REG[id];
     if (!r) return notFound('regulation');
-    var obls = oblsByReg[id] || [];
+    var obls = sortItems(oblsByReg[id] || [], 'sequence');
     var c = regCoverage(r);
     var nd = nextDate(r);
     var ctx = isContext(r);
@@ -967,9 +1011,9 @@
       seg.appendChild(el('button', { type: 'button', 'aria-pressed': state.docLayer === g[0] ? 'true' : 'false',
         onClick: function () { state.docLayer = g[0]; render(true); } }, g[1]));
     });
-    var list = D.documents.filter(function (d) {
+    var list = sortItems(D.documents.filter(function (d) {
       return state.docLayer === 'all' || d.layer === state.docLayer || (state.docLayer === '_ref' && !d.layer);
-    });
+    }), L.browse.default_sort, function (d) { return d.title; });
     var tbody = el('tbody');
     list.forEach(function (d) {
       var n = (oblsByDoc[d.id] || []).length;

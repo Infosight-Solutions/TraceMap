@@ -18,6 +18,8 @@ const path = require('path');
 const yaml = require('js-yaml');
 const { validate, formatIssue } = require('./lib/validate');
 const { checkDataVersions } = require('./lib/versions');
+const { relationshipTypes } = require('./lib/schema');
+const { resolveLayouts } = require('./lib/layouts');
 
 const TOOL_VERSION = '0.2.0';
 
@@ -122,6 +124,12 @@ function main() {
     console.error('\nBuild failed: ' + errors.length + ' error(s). Nothing was written.');
     process.exit(1);
   }
+
+  // The page gets complete settings: defaults filled in for layouts and relationship types.
+  data.catalog = Object.assign({}, data.catalog, {
+    layouts: resolveLayouts(data.catalog),
+    relationship_types: relationshipTypes(data.catalog),
+  });
 
   data.build_metadata = {
     tool_version: TOOL_VERSION,

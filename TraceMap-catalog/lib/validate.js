@@ -24,6 +24,7 @@
 // options.today ('YYYY-MM-DD', default today) is the date valid_until is compared with.
 
 const { ISO_DATE, COLUMNS, ITEM_KINDS, relationshipTypes } = require('./schema');
+const { layoutIssues } = require('./layouts');
 
 function isMissing(v) { return !v || (typeof v === 'string' && !v.trim()); }
 
@@ -161,6 +162,7 @@ function validate(d, options = {}) {
     indexById(c.relationship_types, 'catalog.yaml relationship_types');
   }
   const relTypeIds = relationshipTypes(c).map(t => t.id);
+  layoutIssues(c).forEach(i => err(Object.assign({}, CAT, { where: 'catalog.yaml ' + i.path }), i.message, { field: i.path, value: i.value, expected: i.expected }));
 
   const layerList = [...layers.keys()].join(' | ');
   const idsIn = file => 'an ID in ' + file;

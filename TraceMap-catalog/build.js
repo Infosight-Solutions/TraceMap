@@ -96,7 +96,8 @@ function main() {
     controls: loadYaml(dir, 'controls.yaml', 'controls', false),
     obligations: loadYaml(dir, 'obligations.yaml', 'obligations', true),
     mappings: loadYaml(dir, 'mappings.yaml', 'mappings', true),
-    glossary: loadYaml(dir, 'glossary.yaml', 'glossary', false)
+    glossary: loadYaml(dir, 'glossary.yaml', 'glossary', false),
+    relationships: loadYaml(dir, 'relationships.yaml', 'relationships', false)
   };
 
   const { errors, warnings } = validate(data);

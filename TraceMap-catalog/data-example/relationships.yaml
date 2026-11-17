@@ -1,0 +1,12 @@
+# Links between any two items: regulations, obligations, documents, topics, or controls.
+# Optional. Each entry reads "from_item <type> to_item"; the other item shows the reverse.
+#
+#   - from_item: POL-002          # a bare ID works when only one item has it
+#     to_item: topic:access       # prefix with the kind when an ID is shared (topic:, control:, ...)
+#     type: references            # upstream | downstream | requires | references | related
+#     description: The policy sets the rules this topic summarizes
+#
+# The example catalog has none yet. Older fields (topic related, mapping documents,
+# regulation reg_document) keep working; a later release moves them here.
+
+relationships: []

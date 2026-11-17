@@ -21,7 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const ExcelJS = require('exceljs');
-const { COLUMNS, SHEET_ORDER, TEMPLATE_VERSION } = require('../lib/schema');
+const { COLUMNS, SHEET_ORDER, TEMPLATE_VERSION, SHEETS_ADDED_IN } = require('../lib/schema');
 const { validate } = require('../lib/validate');
 const { REPORT_NAME, mdCell, mdCode, stamp, renderReport: renderMarkdown } = require('../lib/report');
 
@@ -40,6 +40,7 @@ const ENTITIES = {
   Controls:    'controls',
   Roles:       'roles',
   Glossary:    'glossary',
+  Relationships: 'relationships',
 };
 
 // Child sheets folded into a parent list; the foreign key is dropped from the nested object.
@@ -346,8 +347,14 @@ async function main() {
   const sheetRows = {};
   for (const sheet of entitySheets) {
     const ws = wb.getWorksheet(sheet);
-    if (!ws) fatal(`workbook has no "${sheet}" sheet. Run "npm run generate-template" for a complete template.`);
     sheetCols[sheet] = columnsFor(sheet, catalog);
+    if (!ws && versionInfo.found.minor < (SHEETS_ADDED_IN[sheet] ?? 0)) {
+      // An older template that predates this sheet: treat it as empty.
+      report.warn({ sheet, row: '—', column: '', note: `Sheet not in this older template (${versionInfo.found.text}); imported as empty` });
+      sheetRows[sheet] = [];
+      continue;
+    }
+    if (!ws) fatal(`workbook has no "${sheet}" sheet. Run "npm run generate-template" for a complete template.`);
     sheetRows[sheet] = readSheet(ws, sheet, sheetCols[sheet], report, versionInfo).rows;
   }
 

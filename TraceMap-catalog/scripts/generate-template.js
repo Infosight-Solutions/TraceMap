@@ -79,6 +79,8 @@ const EXAMPLES = {
     total_obligations: 33,
     date_display: '',
     last_reviewed: '2026-07-10',
+    sequence: 10,
+    parent: '',
   },
   Reg_Key_Dates: {
     regulation_id: 'soc2',
@@ -104,6 +106,7 @@ const EXAMPLES = {
     version: '2017 TSC',
     plain_title: 'Lock down who can log in',
     plain_summary: 'Systems check who you are before letting you in.',
+    sequence: '',
   },
   Mappings: {
     obligation_id: 'soc2-cc6-1',
@@ -131,6 +134,8 @@ const EXAMPLES = {
     last_reviewed: '2026-01-20',
     review_interval_days: 365,
     restricted: false,
+    sequence: '',
+    parent: 'POL-001',
   },
   Topics: {
     id: 'access',
@@ -139,6 +144,7 @@ const EXAMPLES = {
     summary: 'Only the right people should see or change company data.',
     applies_to_you: 'Adding a new hire to a system | Giving someone admin rights',
     related: 'identity | logging',
+    parent: '',
   },
   Controls: {
     id: 'authentication',
@@ -155,6 +161,12 @@ const EXAMPLES = {
     definition: 'An organization that handles personal data on behalf of a controller.',
     aliases: 'processors',
   },
+  Relationships: {
+    from_item: 'POL-002',
+    to_item: 'topic:access',
+    type: 'references',
+    description: 'The policy sets the rules this topic summarizes',
+  },
 };
 
 const SHEET_DESCRIPTIONS = {
@@ -162,12 +174,13 @@ const SHEET_DESCRIPTIONS = {
   Reg_Key_Dates: 'Key dates for regulations (effective dates, deadlines, internal milestones). Many rows per regulation.',
   Obligations: 'Individual requirements. Each belongs to one regulation.',
   Mappings: 'One row per obligation: its documentation status and rationale.',
-  Mapping_Docs: 'Which documents address each mapped obligation. One row per obligation–document pair.',
+  Mapping_Docs: 'Which documents address each mapped obligation. One row per obligation–document pair. (Legacy layout: still supported; a later release moves it to Relationships.)',
   Documents: 'Policies, standards, procedures, evidence, and reference summaries the catalog links to.',
   Topics: 'Plain-language topics shown as tiles on the home page.',
   Controls: 'Shared controls that satisfy requirements across several regulations. Each belongs to one topic.',
   Roles: 'Accountable roles. Use role titles, not people’s names.',
   Glossary: 'Plain definitions. Terms and aliases get a hover definition wherever they appear in summaries.',
+  Relationships: 'Links between any two items (regulations, obligations, documents, topics, controls). One row per link. Optional.',
 };
 
 // ---------- CLI ----------
@@ -287,7 +300,11 @@ const SOURCES = {
   Controls:    ['controls.yaml',    'controls'],
   Roles:       ['roles.yaml',       'roles'],
   Glossary:    ['glossary.yaml',    'glossary'],
+  Relationships: ['relationships.yaml', 'relationships'],
 };
+
+// Files added after most catalogs were written; a missing one is normal, so no warning.
+const QUIET_IF_MISSING = new Set(['relationships.yaml']);
 
 // Nested lists that become their own sheets; not reported as unmapped fields.
 const NESTED = { Regulations: 'key_dates', Mappings: 'documents' };
@@ -307,7 +324,7 @@ function normalizeDates(node) {
 function loadList(dir, file, key) {
   const p = path.join(dir, file);
   if (!fs.existsSync(p)) {
-    console.warn(`  warning: ${p} not found; its sheet will be empty`);
+    if (!QUIET_IF_MISSING.has(file)) console.warn(`  warning: ${p} not found; its sheet will be empty`);
     return [];
   }
   let doc;
@@ -594,6 +611,9 @@ function addInstructionsSheet(wb, built, catalogPath, populated) {
   para('IDs', 'IDs must be unique within their tab and must not contain a slash (/) or hash (#). Lowercase letters, digits, hyphens, and underscores are safest. Other tabs refer to records by these IDs, so changing one means updating every reference.');
   para('Dates', 'Use ISO format YYYY-MM-DD (for example 2026-07-10). Date columns are formatted to display this way.');
   para('TRUE / FALSE', 'Use the dropdown. Blank means the field is not set and the default applies.');
+  para('Sequence', 'Optional sort position (Regulations, Obligations, Documents). Lower numbers come first; rows without one keep their order after those with one.');
+  para('Parent', 'Optional ID of another row on the same tab (Regulations, Topics, Documents). A row cannot be its own parent, directly or through a chain.');
+  para('Relationships', 'From Item and To Item take any regulation, obligation, document, topic, or control ID. If two kinds of item share an ID, add the kind in front: topic:logging or control:logging.');
   r += 1;
 
   heading('Importing');

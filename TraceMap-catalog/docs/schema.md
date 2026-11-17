@@ -7,7 +7,7 @@ reference for anyone authoring YAML data files.
 
 ## Overview
 
-Nine YAML files, six required and three optional, all in one data directory
+Ten YAML files, six required and four optional, all in one data directory
 (default `data/`, public example `data-example/`).
 
 | File | Required | Top-level key |
@@ -21,6 +21,7 @@ Nine YAML files, six required and three optional, all in one data directory
 | `controls.yaml` | no | `controls` |
 | `roles.yaml` | no | `roles` |
 | `glossary.yaml` | no | `glossary` |
+| `relationships.yaml` | no | `relationships` |
 
 ---
 
@@ -119,7 +120,7 @@ Top-level key: `regulations` (list).
 |---|---|---|
 | `full_title` | string | Shown as subtitle on the regulation detail page. |
 | `summary` | string | Lede text on the regulation detail page. Glossary terms hyperlinked. |
-| `reg_document` | document ID | Link to a reference document (e.g., full regulation text). Must exist in `documents.yaml`. Enables the "Open [reg_doc_label]" button. |
+| `reg_document` | document ID | **Legacy** (see [Legacy relationship fields](#legacy-relationship-fields)). Link to a reference document (e.g., full regulation text). Must exist in `documents.yaml`. Enables the "Open [reg_doc_label]" button. |
 | `source_url` | URL string | Link to the external official source. Shown as "Official source" button (opens in new tab). |
 | `accountable_role` | role ID | Must exist in `roles.yaml`. Shown as "Not sure? Ask the [role]." |
 | `condition` | string | Short phrase shown as a tag badge on the regulation row in the crosswalk table (e.g. "EU personal data"). Useful for signaling applicability at a glance. |
@@ -132,6 +133,8 @@ Top-level key: `regulations` (list).
 | `last_reviewed` | ISO date | Used in overdue calculation. Format validated. |
 | `total_obligations` | non-negative integer | If set and greater than the number of obligations cataloged, the UI shows "N more requirements in scope but not yet added." They count as `not_assessed` in coverage stats. |
 | `date_display` | string | Fallback text shown in the regulation library table when no future key date exists. |
+| `sequence` | non-negative integer | Sort position in lists; lower first. Items without one follow, in file order. |
+| `parent` | regulation ID | Another regulation in this file. Must not be the regulation itself or form a loop. |
 
 **Key dates object** (items in `key_dates` list)
 
@@ -180,6 +183,7 @@ Top-level key: `obligations` (list).
 | `version` | string | "Assessed against [version]" shown in detail panel unless the mapping provides `mapped_against_version`. |
 | `accountable_role` | role ID | Must exist in `roles.yaml`. Shown as "Accountable: [role name]." |
 | `family` | string | Groups requirements under a subheading in the regulation detail view. Default: `"Requirements"`. Groups appear in first-encountered order. |
+| `sequence` | non-negative integer | Sort position in lists; lower first. Items without one follow, in file order. |
 
 ---
 
@@ -209,7 +213,7 @@ Top-level key: `mappings` (list). Each obligation may appear at most once — a 
 | `last_reviewed` | ISO date | Used in overdue calculation. Format validated. |
 | `review_interval_days` | integer | Per-mapping override of `catalog.review_interval_days`. |
 | `mapped_against_version` | string | "Assessed against [version]" in detail panel. Overrides `obligation.version` if both are set. |
-| `documents` | list | Document evidence items. |
+| `documents` | list | **Legacy** (see [Legacy relationship fields](#legacy-relationship-fields)). Document evidence items. |
 
 **Document evidence object** (items in `documents` list)
 
@@ -249,6 +253,8 @@ Top-level key: `documents` (list).
 | `last_reviewed` | ISO date | Format validated. Used in overdue calculation. |
 | `review_interval_days` | integer | Per-document override of `catalog.review_interval_days`. |
 | `restricted` | boolean | Shows a "Restricted access" tag in red. Does not restrict access — the HTML is a static file. |
+| `sequence` | non-negative integer | Sort position in lists; lower first. Items without one follow, in file order. |
+| `parent` | document ID | Another document in this file. Must not be the document itself or form a loop. |
 
 ---
 
@@ -263,7 +269,8 @@ Top-level key: `topics` (list).
 | `blurb` | no | string | Subtitle on topic tile cards. |
 | `summary` | no | string | Lede on the topic detail page. Glossary terms hyperlinked. |
 | `applies_to_you` | no | list of strings | Rendered as a checklist: "This applies to you if you are…" |
-| `related` | no | list of topic IDs | Validated for referential integrity but not currently rendered in the UI. |
+| `related` | no | list of topic IDs | **Legacy** (see [Legacy relationship fields](#legacy-relationship-fields)). Shown as "Related topics" on the topic page. |
+| `parent` | no | topic ID | Another topic in this file. Must not be the topic itself or form a loop. |
 
 ---
 
@@ -309,6 +316,39 @@ topic `summary`, `applies_to_you`. Does **not** apply to `title`, `name`, `contr
 
 ---
 
+## 10. `relationships.yaml` *(optional)*
+
+Top-level key: `relationships` (list). Each entry links two items and reads
+"`from_item` *type* `to_item`". The item at the other end shows the reverse wording.
+
+| Field | Required | Type | Notes |
+|---|---|---|---|
+| `from_item` | yes | item reference | See below. |
+| `to_item` | yes | item reference | See below. Must be a different item than `from_item`. |
+| `type` | yes | enum | `upstream \| downstream \| requires \| references \| related` |
+| `description` | no | string | Shown next to the link. |
+
+**Item references.** An endpoint can be a regulation, obligation, document, topic, or control.
+Write a bare ID (`soc2`) when only one item has it. IDs only have to be unique within their own
+file, so when two kinds of item share an ID, prefix it with the kind: `regulation:`,
+`obligation:`, `document:`, `topic:`, or `control:` (for example `topic:logging`). A bare ID that
+matches more than one item is a build error that names the prefixes to use.
+
+The same pair of items with the same type may be listed only once.
+
+### Legacy relationship fields
+
+These older fields still work and are still validated. A later release moves them into
+`relationships.yaml`; until then, keep using them where they are.
+
+| Field | Meaning |
+|---|---|
+| `regulation.reg_document` | The regulation's reference document |
+| `mapping.documents[]` | Documents that address a requirement, by layer |
+| `topic.related[]` | Related topics |
+
+---
+
 ## Enumerations
 
 ### `source_type` (regulations)
@@ -342,6 +382,16 @@ topic `summary`, `applies_to_you`. Does **not** apply to `title`, `name`, `contr
 Display labels are overridable via `catalog.status_labels`. Color coding: verified = navy,
 deviations noted = amber, verification pending = red, not assessed = gray dashed.
 
+### `type` (relationships)
+
+| Value | Reads from `from_item` | Reads from `to_item` |
+|---|---|---|
+| `upstream` | Upstream of | Downstream of |
+| `downstream` | Downstream of | Upstream of |
+| `requires` | Requires | Required by |
+| `references` | References | Referenced by |
+| `related` | Related to | Related to |
+
 ---
 
 ## Cross-reference rules (build errors if violated)
@@ -363,6 +413,11 @@ deviations noted = amber, verification pending = red, not assessed = gray dashed
 | `document.layer` must exist in catalog layers (unless `doc_type: reference`) |
 | `control.topic` must exist in topics |
 | `topic.related[]` must exist in topics |
+| `regulation.parent`, `topic.parent`, `document.parent` must exist in the same file, must not be the item itself, and must not form a loop |
+| `sequence` must be a non-negative integer |
+| `relationships[].from_item` and `to_item` must each resolve to exactly one item, and to different items |
+| `relationships[].type` must be one of the relationship types |
+| A relationship (same items, same type) must not be listed twice |
 | `catalog.layers` IDs must be unique |
 | `catalog.applicability` IDs must be unique |
 | `catalog.facets[].field` must be present |
@@ -385,7 +440,7 @@ deviations noted = amber, verification pending = red, not assessed = gray dashed
 **Identifiers**
 - IDs are freeform strings, case-sensitive, opaque to the engine. No format is validated.
 - IDs are used in URL routing via `encodeURIComponent`. IDs containing `/` or `#` will break routing.
-- IDs must be unique within their own file; cross-file collisions (same string as both a regulation ID and document ID) are permitted.
+- IDs must be unique within their own file; cross-file collisions (same string as both a regulation ID and document ID) are permitted. In `relationships.yaml`, a shared ID needs a kind prefix (`topic:logging`).
 
 **Ordering**
 - Data is rendered in YAML file order in most views. The engine does not sort except in the timeline (by date) and reviews (by overdue status).
@@ -408,7 +463,6 @@ deviations noted = amber, verification pending = red, not assessed = gray dashed
 - `text` renders verbatim. No Markdown. YAML multi-line scalars using `|` preserve line breaks in the YAML source, but HTML collapses them to spaces unless the renderer adds `white-space: pre-wrap`.
 
 **Other**
-- `topic.related` is validated but not rendered anywhere in the current UI.
 - `total_obligations` on a regulation is the only mechanism for signaling that the catalog does not yet list all in-scope requirements. Setting it lower than the actual obligation count has no effect.
 - The `group_field` default (`"category"`) means that if no facet with `field: category` is defined, the regulation library groups by raw `category` values on each regulation, labeled without a header.
 - `review_interval_days` on individual documents and mappings silently overrides the catalog default. This field is not mentioned in comments or error messages.

@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const {
   EXAMPLE_DIR, FIXTURE, EXAMPLE_CATALOG, ENTITY_FILES,
-  run, tempDir, readYaml, loadData, editWorkbook, headerIndex, trimTrailing,
+  run, tempDir, copyExample, readYaml, loadData, editYaml, editWorkbook, headerIndex, trimTrailing,
 } = require('./helpers');
 
 const BLANK_ARGS = out => ['--catalog', EXAMPLE_CATALOG, '--out', out];
@@ -274,10 +274,41 @@ test('file-level failures exit 2', async t => {
 
 test('a newer minor template version imports with a warning', async t => {
   const dir = tempDir(t);
-  const file = await editWorkbook(FIXTURE, path.join(dir, 'v1-1.xlsx'), wb => { wb.getWorksheet('Instructions').getCell('C2').value = '1.1'; });
+  const file = await editWorkbook(FIXTURE, path.join(dir, 'v1-9.xlsx'), wb => { wb.getWorksheet('Instructions').getCell('C2').value = '1.9'; });
   const res = importFile(file, path.join(dir, 'out'));
   assert.equal(res.status, 0, res.stderr);
   assert.match(res.stdout, /newer than this importer/);
+});
+
+test('a 1.0 workbook without the Relationships sheet or new columns imports with warnings', async t => {
+  const dir = tempDir(t);
+  const file = await editWorkbook(FIXTURE, path.join(dir, 'v1-0.xlsx'), wb => {
+    wb.getWorksheet('Instructions').getCell('C2').value = '1.0';
+    wb.removeWorksheet(wb.getWorksheet('Relationships').id);
+    const reg = wb.getWorksheet('Regulations');
+    reg.spliceColumns(headerIndex(reg).Sequence, 1);
+  });
+  const out = path.join(dir, 'out');
+  const res = importFile(file, out);
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /Relationships row —: Sheet not in this older template \(1\.0\)/);
+  assert.match(res.stdout, /Regulations row 1, Sequence: Column not in this older template/);
+  assert.deepEqual(readYaml(path.join(out, 'relationships.yaml')).relationships, []);
+});
+
+test('round trip keeps sequence, parent, and relationships', async t => {
+  const src = copyExample(t);
+  editYaml(src, 'regulations.yaml', doc => { doc.regulations[0].sequence = 2; doc.regulations[1].parent = doc.regulations[0].id; });
+  editYaml(src, 'documents.yaml', doc => { doc.documents[1].parent = doc.documents[0].id; });
+  editYaml(src, 'relationships.yaml', doc => {
+    doc.relationships = [{ from_item: 'topic:logging', to_item: 'control:logging', type: 'related', description: 'Same subject' }];
+  });
+  const xlsx = path.join(src, 'export.xlsx');
+  assert.equal(run('scripts/generate-template.js', ['--populate', src, '--out', xlsx]).status, 0);
+  const out = path.join(src, 'imported');
+  const res = importFile(xlsx, out);
+  assert.equal(res.status, 0, res.stderr);
+  assertSameRecords(out, src);
 });
 
 test('a successful import removes a stale import-report.md', t => {

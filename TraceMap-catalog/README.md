@@ -51,7 +51,7 @@ If the build finds a problem, it lists each error (for example a mapping that po
 
 ## Data files
 
-Nine YAML files, six required and three optional. `docs/schema.md` is the full field-by-field reference, and `data-example/` has a working example of every file.
+Ten YAML files, six required and four optional. `docs/schema.md` is the full field-by-field reference, and `data-example/` has a working example of every file.
 
 | File | Required | What it holds |
 |---|---|---|
@@ -64,6 +64,7 @@ Nine YAML files, six required and three optional. `docs/schema.md` is the full f
 | `controls.yaml` | no | Shared controls that satisfy requirements across regulations |
 | `roles.yaml` | no | Accountable roles (use roles, not people's names) |
 | `glossary.yaml` | no | Terms that get hover definitions in summaries |
+| `relationships.yaml` | no | Links between any two items (upstream, downstream, requires, references, related) |
 
 **Layers** are defined in `catalog.yaml`, so you can name them to match how your organization organizes documents. The example uses policy, standard, procedure, and evidence. Each document belongs to one layer, and a mapping can override it for a single requirement.
 

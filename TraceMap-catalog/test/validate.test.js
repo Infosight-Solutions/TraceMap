@@ -110,6 +110,56 @@ test('a status that needs a rationale warns when it has none', () => {
   assert.equal(w.message, 'deviations_noted without a rationale');
 });
 
+test('sequence must be a whole number', () => {
+  const d = fresh();
+  d.regulations[0].sequence = 3;
+  d.obligations[0].sequence = 1.5;
+  const errs = validate(d).errors.filter(i => i.field === 'sequence');
+  assert.deepEqual(errs.map(i => [i.entity, i.index]), [['obligations', 0]]);
+});
+
+test('parent must be another item of the same kind, with no loops', () => {
+  const d = fresh();
+  const [a, b, c] = d.topics;
+  b.parent = a.id;                      // fine
+  d.documents[0].parent = 'ghost';      // unknown
+  d.regulations[0].parent = d.regulations[0].id; // itself
+  assert.deepEqual(validate(d).errors.map(formatIssue), [
+    `documents.yaml "${d.documents[0].id}": parent "ghost" is not in documents.yaml`,
+    `regulations.yaml "${d.regulations[0].id}": parent is the item itself`,
+  ]);
+
+  const loop = fresh();
+  loop.topics[0].parent = loop.topics[1].id;
+  loop.topics[1].parent = loop.topics[2].id;
+  loop.topics[2].parent = loop.topics[0].id;
+  const errs = validate(loop).errors;
+  assert.equal(errs.length, 1, 'a loop is reported once');
+  assert.equal(errs[0].message, `parent chain loops back to this item: ${a.id} → ${b.id} → ${c.id} → ${a.id}`);
+});
+
+test('relationships: endpoints resolve by ID or kind:ID, with clear errors otherwise', () => {
+  const d = fresh();
+  const reg = d.regulations[0].id;
+  const doc = d.documents[0].id;
+  d.relationships = [
+    { from_item: reg, to_item: 'document:' + doc, type: 'references' }, // ok
+    { from_item: 'topic:logging', to_item: 'control:logging', type: 'related' }, // ok: prefixes disambiguate
+    { from_item: 'logging', to_item: reg, type: 'related' },             // ambiguous
+    { from_item: 'ghost', to_item: reg, type: 'requires' },              // unknown
+    { from_item: reg, to_item: 'regulation:' + reg, type: 'related' },   // same item
+    { from_item: reg, to_item: doc, type: 'references' },                // repeats entry 1
+    { from_item: reg, to_item: doc, type: 'parent_of' },                 // bad type
+  ];
+  assert.deepEqual(validate(d).errors.map(formatIssue), [
+    'relationships.yaml entry 7: type must be one of upstream, downstream, requires, references, related',
+    'relationships.yaml entry 3: from_item "logging" matches more than one item (topic, control); write it as topic:logging or control:logging',
+    'relationships.yaml entry 4: from_item "ghost" is not the ID of any item',
+    'relationships.yaml entry 5: from_item and to_item are the same item',
+    'relationships.yaml entry 6: repeats entry 1 (same items and type)',
+  ]);
+});
+
 test('build.js succeeds on the example data and fails on broken data', t => {
   const out = path.join(copyExample(t), 'out.html');
   assert.equal(run('build.js', ['--data', 'data-example', '--out', out]).status, 0);

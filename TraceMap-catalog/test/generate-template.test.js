@@ -82,6 +82,8 @@ test('dropdowns: fixed enums, facets, layers, booleans', () => {
   assert.deepEqual(listValues(validationAt(blank.getWorksheet('Documents'), 'Layer')), layerIds);
   assert.deepEqual(listValues(validationAt(blank.getWorksheet('Mapping_Docs'), 'Layer Override')), layerIds);
   assert.deepEqual(listValues(validationAt(blank.getWorksheet('Documents'), 'Restricted')), ['TRUE', 'FALSE']);
+  assert.deepEqual(listValues(validationAt(blank.getWorksheet('Relationships'), 'Type')), COLUMNS.Relationships.find(c => c.key === 'type').values);
+  assert.equal(validationAt(reg, 'Sequence').type, 'whole');
   assert.equal(validationAt(reg, 'Total Obligations').type, 'whole');
   assert.equal(validationAt(reg, 'Last Reviewed').type, 'date');
   assert.equal(validationAt(reg, 'Summary'), undefined);
@@ -117,6 +119,7 @@ test('populated workbook: no example row, data from row 2, counts match the YAML
     Controls: d.controls.length,
     Roles: d.roles.length,
     Glossary: d.glossary.length,
+    Relationships: d.relationships.length,
   };
   for (const sheet of ENTITY_SHEETS) {
     const ws = populated.getWorksheet(sheet);

@@ -18,7 +18,7 @@
 //   }
 // formatIssue(issue) gives the one-line text build.js prints: '<where>: <message>'.
 
-const { ISO_DATE, COLUMNS } = require('./schema');
+const { ISO_DATE, COLUMNS, ITEM_KINDS } = require('./schema');
 
 function isMissing(v) { return !v || (typeof v === 'string' && !v.trim()); }
 
@@ -78,6 +78,33 @@ function validate(d) {
     });
   }
 
+  // parent must name another item of the same kind, and parent chains must not loop.
+  // A loop is reported once, on its first item in file order.
+  function checkParents(list, map, file, label, locFn) {
+    const reported = new Set();
+    list.forEach((item, i) => {
+      if (!item || isMissing(item.parent)) return;
+      const loc = locFn(item, i);
+      if (item.parent === item.id) return err(loc, 'parent is the item itself', { field: 'parent', value: item.parent, expected: 'the ID of a different ' + label });
+      if (!map.has(item.parent)) return err(loc, 'parent "' + item.parent + '" is not in ' + file, { field: 'parent', value: item.parent, expected: idsIn(label[0].toUpperCase() + label.slice(1) + 's') });
+      const chain = [item.id];
+      let cur = item.parent;
+      while (cur && map.has(cur) && chain.length <= list.length) {
+        if (cur === item.id) {
+          const key = [...chain].sort().join('\u0000');
+          if (!reported.has(key)) {
+            reported.add(key);
+            err(loc, 'parent chain loops back to this item: ' + chain.concat(cur).join(' → '), { field: 'parent', value: item.parent, expected: 'a parent chain that ends at an item with no parent' });
+          }
+          return;
+        }
+        if (chain.includes(cur)) return; // a loop further up; reported on its own items
+        chain.push(cur);
+        cur = map.get(cur).parent;
+      }
+    });
+  }
+
   // Filtered column sets for child-row sheets; the foreign-key column is implicit from context.
   const kdCols = COLUMNS.Reg_Key_Dates.filter(col => col.key !== 'regulation_id');
   const mdCols = COLUMNS.Mapping_Docs.filter(col => col.key !== 'obligation_id');
@@ -122,6 +149,7 @@ function validate(d) {
     }
     if (!doc.url && !doc.status_note) warn(loc, 'no url and no status_note, readers will see a dead entry', { field: 'url' });
   });
+  checkParents(d.documents, documents, 'documents.yaml', 'document', docLoc);
 
   // --- regulations.yaml ---
   const regLoc = (r, i) => at('regulations.yaml', 'regulations', i, 'regulations.yaml "' + r.id + '"');
@@ -146,6 +174,7 @@ function validate(d) {
     });
     validateColumns(r.key_dates || [], kdCols, (k, j) => atChild(loc, 'key_dates', j, loc.where + ' key_dates entry ' + (j + 1)));
   });
+  checkParents(d.regulations, regulations, 'regulations.yaml', 'regulation', regLoc);
 
   // --- topics.yaml ---
   const topicLoc = (t, i) => at('topics.yaml', 'topics', i, 'topics.yaml "' + t.id + '"');
@@ -154,6 +183,7 @@ function validate(d) {
     const loc = topicLoc(t, i);
     (t.related || []).forEach(x => { if (!topics.has(x)) err(loc, 'related topic "' + x + '" does not exist', { field: 'related', value: x, expected: idsIn('Topics') }); });
   });
+  checkParents(d.topics, topics, 'topics.yaml', 'topic', topicLoc);
 
   // --- controls.yaml ---
   const ctlLoc = (cc, i) => at('controls.yaml', 'controls', i, 'controls.yaml "' + cc.id + '"');
@@ -202,7 +232,51 @@ function validate(d) {
   // --- glossary.yaml ---
   validateColumns(d.glossary, COLUMNS.Glossary, (g, i) => at('glossary.yaml', 'glossary', i, 'glossary.yaml entry ' + (i + 1)));
 
+  // --- relationships.yaml (optional file) ---
+  const rels = d.relationships || [];
+  const itemMaps = { regulations, obligations, documents, topics, controls };
+  const relLoc = (x, i) => at('relationships.yaml', 'relationships', i, 'relationships.yaml entry ' + (i + 1));
+  validateColumns(rels, COLUMNS.Relationships, relLoc);
+  const seenRel = new Map();
+  rels.forEach((x, i) => {
+    if (!x || typeof x !== 'object') return;
+    const loc = relLoc(x, i);
+    const ends = ['from_item', 'to_item'].map(field => {
+      const v = x[field];
+      if (isMissing(v)) return null; // reported by validateColumns
+      const r = resolveItemRef(String(v), itemMaps);
+      if (r.error) err(loc, field + ' ' + r.error, { field, value: v, expected: r.expected });
+      return r.error ? null : r.kind + ':' + r.id;
+    });
+    if (!ends[0] || !ends[1]) return;
+    if (ends[0] === ends[1]) return err(loc, 'from_item and to_item are the same item', { field: 'to_item', value: x.to_item, expected: 'a different item than from_item' });
+    const key = ends[0] + '\u0000' + ends[1] + '\u0000' + x.type;
+    if (seenRel.has(key)) err(loc, 'repeats entry ' + (seenRel.get(key) + 1) + ' (same items and type)', { field: 'type', value: x.type, expected: 'each relationship listed once' });
+    else seenRel.set(key, i);
+  });
+
   return { errors, warnings };
 }
 
-module.exports = { validate, formatIssue, isMissing };
+// Resolves a relationship endpoint ("soc2" or "regulation:soc2") against the ID maps.
+// Returns { kind, id } or { error, expected }. kind is a key of ITEM_KINDS.
+function resolveItemRef(ref, itemMaps) {
+  const kinds = Object.keys(ITEM_KINDS);
+  const all = 'an ID in ' + kinds.map(k => ITEM_KINDS[k]).join(', ') + ' (prefix with kind: when ambiguous)';
+  const colon = ref.indexOf(':');
+  if (colon > 0 && ITEM_KINDS[ref.slice(0, colon)]) {
+    const kind = ref.slice(0, colon);
+    const id = ref.slice(colon + 1);
+    if (itemMaps[ITEM_KINDS[kind]].has(id)) return { kind, id };
+    return { error: '"' + ref + '" is not in ' + ITEM_KINDS[kind] + '.yaml', expected: 'an ID in ' + ITEM_KINDS[kind] + '.yaml' };
+  }
+  const hits = kinds.filter(k => itemMaps[ITEM_KINDS[k]].has(ref));
+  if (hits.length === 1) return { kind: hits[0], id: ref };
+  if (!hits.length) return { error: '"' + ref + '" is not the ID of any item', expected: all };
+  return {
+    error: '"' + ref + '" matches more than one item (' + hits.join(', ') + '); write it as ' + hits.map(k => k + ':' + ref).join(' or '),
+    expected: hits.map(k => k + ':' + ref).join(' | '),
+  };
+}
+
+module.exports = { validate, formatIssue, isMissing, resolveItemRef };

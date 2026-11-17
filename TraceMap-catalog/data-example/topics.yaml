@@ -1,5 +1,7 @@
 # Plain-language topics shown as tiles on the home page. Write these for someone
 # who has never read a regulation.
+schema_version: "1.0"
+
 topics:
   - id: access
     name: Who can access what

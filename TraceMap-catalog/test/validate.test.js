@@ -9,8 +9,11 @@ const { EXAMPLE_DIR, loadData, run, copyExample, editYaml } = require('./helpers
 const fresh = () => loadData(EXAMPLE_DIR);
 const find = (issues, pred) => issues.find(pred);
 
+// The example data's as_of date, so expiry checks do not depend on when the tests run.
+const TODAY = { today: '2026-09-01' };
+
 test('example data validates with no errors or warnings', () => {
-  const { errors, warnings } = validate(fresh());
+  const { errors, warnings } = validate(fresh(), TODAY);
   assert.deepEqual(errors.map(formatIssue), []);
   assert.deepEqual(warnings.map(formatIssue), []);
 });
@@ -152,12 +155,77 @@ test('relationships: endpoints resolve by ID or kind:ID, with clear errors other
     { from_item: reg, to_item: doc, type: 'parent_of' },                 // bad type
   ];
   assert.deepEqual(validate(d).errors.map(formatIssue), [
-    'relationships.yaml entry 7: type must be one of upstream, downstream, requires, references, related',
     'relationships.yaml entry 3: from_item "logging" matches more than one item (topic, control); write it as topic:logging or control:logging',
     'relationships.yaml entry 4: from_item "ghost" is not the ID of any item',
     'relationships.yaml entry 5: from_item and to_item are the same item',
     'relationships.yaml entry 6: repeats entry 1 (same items and type)',
+    'relationships.yaml entry 7: type "parent_of" is not in catalog.yaml relationship_types',
   ]);
+});
+
+test('relationship types come from catalog.yaml and replace the defaults', () => {
+  const d = fresh();
+  d.catalog.relationship_types = [{ id: 'implements', label: 'Implements', inverse_label: 'Implemented by' }];
+  d.relationships = [
+    { from_item: d.documents[0].id, to_item: d.regulations[0].id, type: 'implements' },
+    { from_item: d.documents[1].id, to_item: d.regulations[0].id, type: 'related' }, // a default, no longer listed
+  ];
+  const e = validate(d).errors;
+  assert.deepEqual(e.map(i => [i.index, i.field, i.expected]), [[1, 'type', 'implements']]);
+
+  d.catalog.relationship_types.push({ id: 'implements' });
+  assert.match(validate(d).errors.map(formatIssue).join('\n'), /catalog\.yaml relationship_types: duplicate id "implements"/);
+});
+
+test('relationship attributes must be a map of single values', () => {
+  const d = fresh();
+  const base = { from_item: d.documents[0].id, to_item: d.regulations[0].id, type: 'references' };
+  d.relationships = [
+    { ...base, attributes: { strength: 'strong', weight: 3 } },               // ok
+    { ...base, type: 'related', attributes: ['strong'] },                     // not a map
+    { ...base, type: 'requires', attributes: { owners: ['ciso', 'cfo'] } },   // nested value
+  ];
+  assert.deepEqual(validate(d).errors.map(formatIssue), [
+    'relationships.yaml entry 2: attributes must be a map of key: value',
+    'relationships.yaml entry 3: attribute "owners" must be text or a number, not a list or map',
+  ]);
+});
+
+test('item attributes need a name and a value, each name once per item', () => {
+  const d = fresh();
+  d.regulations[0].attributes = [
+    { name: 'Observation period', value: 12, unit: 'months' }, // a number is fine; so is 0
+    { name: 'Zero', value: 0 },
+    { name: 'Observation period', value: '6' },                // repeated name
+  ];
+  d.obligations[0].attributes = [{ name: 'Owner' }];           // no value
+  d.documents[0].attributes = [{ value: 'x' }, { name: 'Pages', value: { n: 3 } }];
+  const e = validate(d).errors;
+  assert.deepEqual(e.map(i => [i.entity, i.index, i.child, i.childIndex, i.field]), [
+    ['documents', 0, 'attributes', 0, 'name'],
+    ['documents', 0, 'attributes', 1, 'value'],
+    ['regulations', 0, 'attributes', 2, 'name'],
+    ['obligations', 0, 'attributes', 0, 'value'],
+  ]);
+});
+
+test('valid_until and the timestamps must be dates; a past valid_until warns', () => {
+  const d = fresh();
+  d.documents[0].valid_until = '2026-08-31';
+  d.documents[1].valid_until = 'soon';
+  d.regulations[0].created_at = '2026-02-30';
+  d.relationships = [{ from_item: d.documents[0].id, to_item: d.regulations[0].id, type: 'references', modified_at: 'yesterday' }];
+  const { errors, warnings } = validate(d, TODAY);
+  assert.deepEqual(errors.map(i => [i.entity, i.field]).sort(), [['documents', 'valid_until'], ['regulations', 'created_at'], ['relationships', 'modified_at']]);
+  assert.deepEqual(warnings.map(formatIssue), [`documents.yaml "${d.documents[0].id}": valid_until 2026-08-31 has passed; the document shows as Expired`]);
+});
+
+test('fields starting with x- are never checked', () => {
+  const d = fresh();
+  d.regulations[0]['x-owner'] = { nested: ['anything'] };
+  d.documents[0]['x-pages'] = 'not a number';
+  d.catalog['x-note'] = 42;
+  assert.deepEqual(validate(d, TODAY).errors, []);
 });
 
 test('build.js succeeds on the example data and fails on broken data', t => {

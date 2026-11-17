@@ -5,6 +5,8 @@
 # restricted  true if most readers cannot open it
 # status_note shown instead of a link for documents that are not filed yet
 
+schema_version: "1.0"
+
 documents:
   # Reference summaries, one per regulation
   - id: REF-SOC2
@@ -143,7 +145,11 @@ documents:
     layer: evidence
     doc_type: Record
     date_filed: 2026-07-08
+    valid_until: 2027-01-08
     url: https://docs.example.com/evidence/EVD-001
+    attributes:
+      - name: Accounts reviewed
+        value: "214"
   - id: EVD-002
     title: 2026 Incident Response Tabletop Report
     layer: evidence

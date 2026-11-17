@@ -1,6 +1,8 @@
 # Catalog-wide settings: titles, wording, layers, applicability questions, and filters.
 # Everything readers see that is not about a specific regulation lives here.
 
+schema_version: "1.0"
+
 title: Compliance Catalog
 # ^ This is the purpose label that appears in the browser tab and the page header.
 # It combines with your organization name and "TraceMap" to form the full title:

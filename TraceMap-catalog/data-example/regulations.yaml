@@ -12,6 +12,8 @@
 # key_dates        date (YYYY-MM-DD), optional date_text to display instead,
 #                  kind: internal for company milestones, pending: true for undated future events
 
+schema_version: "1.0"
+
 regulations:
   - id: soc2
     name: SOC 2
@@ -51,6 +53,11 @@ regulations:
         detail: Internal milestone. The auditor tests controls over this period.
         kind: internal
     last_reviewed: 2026-06-15
+    attributes:
+      - name: Observation period
+        value: "12"
+        unit: months
+        source: AICPA SOC 2 guide
 
   - id: iso27001
     name: ISO/IEC 27001:2022

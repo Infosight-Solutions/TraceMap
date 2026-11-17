@@ -23,6 +23,40 @@ Ten YAML files, six required and four optional, all in one data directory
 | `glossary.yaml` | no | `glossary` |
 | `relationships.yaml` | no | `relationships` |
 
+### `schema_version`
+
+Every file starts with the version of this data format it was written for:
+
+```yaml
+schema_version: "1.0"
+```
+
+Quote it: unquoted, YAML reads `1.0` as the number 1 (still accepted, read as 1.0). `build.js`,
+`npm run export-xlsx`, and the importer check it:
+
+| Found | Result |
+|---|---|
+| Same major, different minor (e.g. 1.1 data, 1.0 TraceMap) | Warning; the build continues |
+| Different major | Refused, nothing written. Older data points to [Upgrading](#upgrading); newer data asks you to update TraceMap |
+| No `schema_version` | Treated as 1.0, with one warning listing the files that need the line |
+
+The workbook carries the same version in Instructions cell C3, and the importer writes it at the
+top of every YAML file. (C2 is the separate *template* version, which tracks the workbook layout.)
+
+### Extension fields (`x-`)
+
+Any field whose name starts with `x-` belongs to you, on any record or in `catalog.yaml`:
+`x-owner: grc-team`. TraceMap never validates these fields and never shows them, but keeps them:
+
+- The build embeds them in the HTML data like every other field.
+- Export gives each `x-` field with a single value (text, number, true/false) its own column;
+  the importer reads any column whose header starts with `x-` back into the YAML.
+- An `x-` field holding a list or map cannot fit in a cell; export reports it and leaves it out
+  of the workbook (the YAML is not changed).
+
+A field that is neither in this schema nor `x-` is also ignored by the build, but export drops it
+with a warning. Renaming it to `x-<name>` keeps it.
+
 ---
 
 ## 1. `catalog.yaml`
@@ -135,6 +169,8 @@ Top-level key: `regulations` (list).
 | `date_display` | string | Fallback text shown in the regulation library table when no future key date exists. |
 | `sequence` | non-negative integer | Sort position in lists; lower first. Items without one follow, in file order. |
 | `parent` | regulation ID | Another regulation in this file. Must not be the regulation itself or form a loop. |
+| `attributes` | list | Extra facts; see [Attributes](#attributes). |
+| `created_at`, `modified_at` | ISO date | When the record was added and last changed. Format validated; not set automatically and not shown. |
 
 **Key dates object** (items in `key_dates` list)
 
@@ -184,6 +220,8 @@ Top-level key: `obligations` (list).
 | `accountable_role` | role ID | Must exist in `roles.yaml`. Shown as "Accountable: [role name]." |
 | `family` | string | Groups requirements under a subheading in the regulation detail view. Default: `"Requirements"`. Groups appear in first-encountered order. |
 | `sequence` | non-negative integer | Sort position in lists; lower first. Items without one follow, in file order. |
+| `attributes` | list | Extra facts; see [Attributes](#attributes). |
+| `created_at`, `modified_at` | ISO date | When the record was added and last changed. Format validated; not set automatically and not shown. |
 
 ---
 
@@ -255,6 +293,32 @@ Top-level key: `documents` (list).
 | `restricted` | boolean | Shows a "Restricted access" tag in red. Does not restrict access — the HTML is a static file. |
 | `sequence` | non-negative integer | Sort position in lists; lower first. Items without one follow, in file order. |
 | `parent` | document ID | Another document in this file. Must not be the document itself or form a loop. |
+| `valid_until` | ISO date | After this date the document shows an "Expired" tag (checked against the date the page is viewed), and the build warns. Mapping statuses are not changed. |
+| `attributes` | list | Extra facts; see [Attributes](#attributes). |
+| `created_at`, `modified_at` | ISO date | When the record was added and last changed. Format validated; not set automatically and not shown. |
+
+### Attributes
+
+Regulations, obligations, and documents can carry a list of extra facts:
+
+```yaml
+attributes:
+  - name: Observation period
+    value: "12"
+    unit: months
+    source: AICPA SOC 2 guide
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `name` | yes | Each name once per item. |
+| `value` | yes | Text. A YAML number is accepted; the importer writes it back as text. |
+| `unit` | no | e.g. `days`, `months`, `%`. |
+| `source` | no | Where the value comes from. |
+
+Shown as a short "Details" list on the regulation and document pages. In the workbook they live
+on the **Attributes** sheet, one row per fact, with **Item Kind** (`regulation`, `obligation`,
+or `document`) and **Item ID** naming the record they belong to.
 
 ---
 
@@ -325,8 +389,10 @@ Top-level key: `relationships` (list). Each entry links two items and reads
 |---|---|---|---|
 | `from_item` | yes | item reference | See below. |
 | `to_item` | yes | item reference | See below. Must be a different item than `from_item`. |
-| `type` | yes | enum | `upstream \| downstream \| requires \| references \| related` |
+| `type` | yes | relationship type ID | One of `catalog.relationship_types` (see below). |
 | `description` | no | string | Shown next to the link. |
+| `attributes` | no | map | `key: value` pairs, values text or numbers (no lists or maps). In the workbook: one cell, `strength: strong \| reviewed_by: ciso`. A key or value containing `\|` cannot be exported. |
+| `created_at`, `modified_at` | no | ISO date | Format validated; not set automatically. |
 
 **Item references.** An endpoint can be a regulation, obligation, document, topic, or control.
 Write a bare ID (`soc2`) when only one item has it. IDs only have to be unique within their own
@@ -335,6 +401,17 @@ file, so when two kinds of item share an ID, prefix it with the kind: `regulatio
 matches more than one item is a build error that names the prefixes to use.
 
 The same pair of items with the same type may be listed only once.
+
+**Relationship types** are declared in `catalog.yaml`. Without a `relationship_types` section,
+the five defaults below apply; listing the section replaces them entirely.
+
+```yaml
+relationship_types:
+  - id: requires
+    label: Requires              # how from_item reads
+    inverse_label: Required by   # how to_item reads (defaults to label)
+    description: The first item cannot be met without the second   # optional; on the Legend page
+```
 
 ### Legacy relationship fields
 
@@ -382,9 +459,9 @@ These older fields still work and are still validated. A later release moves the
 Display labels are overridable via `catalog.status_labels`. Color coding: verified = navy,
 deviations noted = amber, verification pending = red, not assessed = gray dashed.
 
-### `type` (relationships)
+### Default relationship types
 
-| Value | Reads from `from_item` | Reads from `to_item` |
+| `id` | `label` (from `from_item`) | `inverse_label` (from `to_item`) |
 |---|---|---|
 | `upstream` | Upstream of | Downstream of |
 | `downstream` | Downstream of | Upstream of |
@@ -421,6 +498,12 @@ deviations noted = amber, verification pending = red, not assessed = gray dashed
 | `catalog.layers` IDs must be unique |
 | `catalog.applicability` IDs must be unique |
 | `catalog.facets[].field` must be present |
+| `catalog.relationship_types` IDs must be unique, and the list must not be empty if present |
+| `relationships[].type` must be a relationship type ID |
+| `relationships[].attributes` must be a map of text or number values |
+| `attributes[]` entries need `name` and `value`; each `name` once per item |
+| `valid_until`, `created_at`, `modified_at` must be real `YYYY-MM-DD` dates |
+| `schema_version` must have the same major version as this TraceMap |
 
 ---
 
@@ -432,6 +515,8 @@ deviations noted = amber, verification pending = red, not assessed = gray dashed
 | Document has no `url` and no `status_note` |
 | Mapping has `status: deviations_noted` or `verification_pending` without `rationale` |
 | Obligation has neither `common_control` nor `topics` |
+| Document's `valid_until` has passed |
+| A file has no `schema_version`, or a different minor version |
 
 ---
 
@@ -466,3 +551,15 @@ deviations noted = amber, verification pending = red, not assessed = gray dashed
 - `total_obligations` on a regulation is the only mechanism for signaling that the catalog does not yet list all in-scope requirements. Setting it lower than the actual obligation count has no effect.
 - The `group_field` default (`"category"`) means that if no facet with `field: category` is defined, the regulation library groups by raw `category` values on each regulation, labeled without a header.
 - `review_interval_days` on individual documents and mappings silently overrides the catalog default. This field is not mentioned in comments or error messages.
+
+---
+
+## Upgrading
+
+When a release changes the data format, it raises `schema_version` and lists here what changed
+and how to update your files. A different minor version still builds (with a warning); a
+different major version is refused until the files are updated.
+
+| Schema | Changes |
+|---|---|
+| 1.0 | First versioned format. Files without `schema_version` are read as 1.0; add `schema_version: "1.0"` to silence the warning. |

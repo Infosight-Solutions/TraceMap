@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { COLUMNS, SHEET_ORDER, TEMPLATE_VERSION } = require('../lib/schema');
+const { COLUMNS, SHEET_ORDER, TEMPLATE_VERSION, SCHEMA_VERSION, DEFAULT_RELATIONSHIP_TYPES } = require('../lib/schema');
 const {
   EXAMPLE_DIR, FIXTURE, EXAMPLE_CATALOG, EXAMPLE_NOTE,
   run, tempDir, copyExample, readYaml, loadData, editYaml,
@@ -45,6 +45,8 @@ test('template version is in Instructions!C2 as text', () => {
   assert.equal(ins.getCell('B2').value, 'Template version');
   assert.equal(ins.getCell('C2').value, TEMPLATE_VERSION);
   assert.equal(populated.getWorksheet('Instructions').getCell('C2').value, TEMPLATE_VERSION);
+  assert.equal(ins.getCell('B3').value, 'Data schema version');
+  assert.equal(ins.getCell('C3').value, SCHEMA_VERSION);
 });
 
 test('headers follow COLUMNS, with facet columns appended to Regulations', () => {
@@ -82,7 +84,8 @@ test('dropdowns: fixed enums, facets, layers, booleans', () => {
   assert.deepEqual(listValues(validationAt(blank.getWorksheet('Documents'), 'Layer')), layerIds);
   assert.deepEqual(listValues(validationAt(blank.getWorksheet('Mapping_Docs'), 'Layer Override')), layerIds);
   assert.deepEqual(listValues(validationAt(blank.getWorksheet('Documents'), 'Restricted')), ['TRUE', 'FALSE']);
-  assert.deepEqual(listValues(validationAt(blank.getWorksheet('Relationships'), 'Type')), COLUMNS.Relationships.find(c => c.key === 'type').values);
+  assert.deepEqual(listValues(validationAt(blank.getWorksheet('Relationships'), 'Type')), DEFAULT_RELATIONSHIP_TYPES.map(t => t.id));
+  assert.deepEqual(listValues(validationAt(blank.getWorksheet('Attributes'), 'Item Kind')), ['regulation', 'obligation', 'document']);
   assert.equal(validationAt(reg, 'Sequence').type, 'whole');
   assert.equal(validationAt(reg, 'Total Obligations').type, 'whole');
   assert.equal(validationAt(reg, 'Last Reviewed').type, 'date');
@@ -119,6 +122,7 @@ test('populated workbook: no example row, data from row 2, counts match the YAML
     Controls: d.controls.length,
     Roles: d.roles.length,
     Glossary: d.glossary.length,
+    Attributes: ['regulations', 'obligations', 'documents'].reduce((n, e) => n + d[e].reduce((m, x) => m + (x.attributes || []).length, 0), 0),
     Relationships: d.relationships.length,
   };
   for (const sheet of ENTITY_SHEETS) {

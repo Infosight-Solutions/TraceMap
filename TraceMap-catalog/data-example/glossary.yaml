@@ -1,5 +1,7 @@
 # Plain definitions. Terms (and aliases) are underlined with a hover definition
 # wherever they appear in summaries.
+schema_version: "1.0"
+
 glossary:
   - term: Personal data
     definition: Any information about an identifiable person, such as a name, email address, location, or account ID.

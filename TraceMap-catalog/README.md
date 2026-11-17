@@ -51,7 +51,7 @@ If the build finds a problem, it lists each error (for example a mapping that po
 
 ## Data files
 
-Ten YAML files, six required and four optional. `docs/schema.md` is the full field-by-field reference, and `data-example/` has a working example of every file.
+Ten YAML files, six required and four optional. `docs/schema.md` is the full field-by-field reference, and `data-example/` has a working example of every file. Each file starts with `schema_version: "1.0"` so a future TraceMap can tell which format it is reading. Any field you name with an `x-` prefix (for example `x-owner`) is yours: TraceMap keeps it through builds and spreadsheet round trips but never checks or shows it.
 
 | File | Required | What it holds |
 |---|---|---|

@@ -17,14 +17,22 @@
 //     expected: 'a value (required)'      what would have been accepted
 //   }
 // formatIssue(issue) gives the one-line text build.js prints: '<where>: <message>'.
+//
+// Only fields the schema defines are checked. Unknown fields pass untouched, and fields whose
+// name starts with "x-" are reserved for authors: validate() never looks at them (isExtension).
+//
+// options.today ('YYYY-MM-DD', default today) is the date valid_until is compared with.
 
-const { ISO_DATE, COLUMNS, ITEM_KINDS } = require('./schema');
+const { ISO_DATE, COLUMNS, ITEM_KINDS, relationshipTypes } = require('./schema');
 
 function isMissing(v) { return !v || (typeof v === 'string' && !v.trim()); }
 
 function formatIssue(issue) { return issue.where + ': ' + issue.message; }
 
-function validate(d) {
+const isScalar = v => ['string', 'number', 'boolean'].includes(typeof v);
+
+function validate(d, options = {}) {
+  const today = options.today || new Date().toISOString().slice(0, 10);
   const errors = [];
   const warnings = [];
   const err = (loc, message, extra) => errors.push(Object.assign({}, loc, { message }, extra));
@@ -49,7 +57,9 @@ function validate(d) {
 
   function checkDate(loc, field, v) {
     if (v == null || v === '') return;
-    if (!ISO_DATE.test(String(v)) || isNaN(Date.parse(v))) err(loc, field + ' "' + v + '" is not a YYYY-MM-DD date', { field, value: v, expected: 'YYYY-MM-DD' });
+    // Date.parse rolls 2026-02-30 over to March 2, so also check the date reads back unchanged.
+    const real = ISO_DATE.test(String(v)) && !isNaN(Date.parse(v)) && new Date(v + 'T00:00:00Z').toISOString().slice(0, 10) === String(v);
+    if (!real) err(loc, field + ' "' + v + '" is not a YYYY-MM-DD date', { field, value: v, expected: 'YYYY-MM-DD' });
   }
 
   // Apply required + type checks from a COLUMNS definition to a list of items.
@@ -61,8 +71,9 @@ function validate(d) {
       colDefs.forEach(function(col) {
         if (col.key === 'id') return; // id is handled by indexById
         const v = item[col.key];
-        if (col.required && isMissing(v)) { err(loc, 'missing ' + col.key, { field: col.key, value: v, expected: 'a value (required)' }); return; }
-        if (isMissing(v)) return;
+        const missing = typeof v === 'number' ? false : isMissing(v); // 0 is a value
+        if (col.required && missing) { err(loc, 'missing ' + col.key, { field: col.key, value: v, expected: 'a value (required)' }); return; }
+        if (missing) return;
         if (col.type === 'enum' && col.values) {
           const vals = Array.isArray(v) ? v : [v];
           vals.forEach(function(x) {
@@ -108,6 +119,25 @@ function validate(d) {
   // Filtered column sets for child-row sheets; the foreign-key column is implicit from context.
   const kdCols = COLUMNS.Reg_Key_Dates.filter(col => col.key !== 'regulation_id');
   const mdCols = COLUMNS.Mapping_Docs.filter(col => col.key !== 'obligation_id');
+  const attrCols = COLUMNS.Attributes.filter(col => col.key !== 'item_kind' && col.key !== 'item_id');
+
+  // attributes[] on regulations, obligations, documents: a list of { name, value, unit, source },
+  // each name once per item. value may be text or a number (stored as text by the importer).
+  function checkAttributes(item, loc) {
+    const list = item.attributes;
+    if (list == null) return;
+    if (!Array.isArray(list)) return err(loc, 'attributes must be a list of { name, value } entries', { field: 'attributes', expected: 'a list' });
+    const entryLoc = j => atChild(loc, 'attributes', j, loc.where + ' attributes entry ' + (j + 1));
+    validateColumns(list, attrCols, (a, j) => entryLoc(j));
+    const names = new Set();
+    list.forEach((a, j) => {
+      if (!a || typeof a !== 'object') return err(entryLoc(j), 'is not a mapping');
+      if (a.value != null && !isScalar(a.value)) err(entryLoc(j), 'value must be text or a number', { field: 'value', expected: 'text or a number' });
+      if (isMissing(a.name)) return;
+      if (names.has(a.name)) err(entryLoc(j), 'attribute "' + a.name + '" is listed twice', { field: 'name', value: a.name, expected: 'each attribute name once per item' });
+      names.add(a.name);
+    });
+  }
 
   // --- catalog.yaml --- (no COLUMNS entry; validated inline)
   const c = d.catalog;
@@ -125,6 +155,12 @@ function validate(d) {
     facets.set(f.field, f);
   });
   checkDate(CAT, 'as_of', c.as_of);
+  if (c.relationship_types != null && (!Array.isArray(c.relationship_types) || !c.relationship_types.length)) {
+    err(CAT, 'relationship_types must list at least one type (leave it out to use the defaults)', { field: 'relationship_types' });
+  } else if (c.relationship_types) {
+    indexById(c.relationship_types, 'catalog.yaml relationship_types');
+  }
+  const relTypeIds = relationshipTypes(c).map(t => t.id);
 
   const layerList = [...layers.keys()].join(' | ');
   const idsIn = file => 'an ID in ' + file;
@@ -148,6 +184,10 @@ function validate(d) {
       err(loc, 'layer "' + doc.layer + '" is not defined in catalog.yaml layers', { field: 'layer', value: doc.layer, expected: layerList });
     }
     if (!doc.url && !doc.status_note) warn(loc, 'no url and no status_note, readers will see a dead entry', { field: 'url' });
+    if (doc.valid_until && ISO_DATE.test(String(doc.valid_until)) && String(doc.valid_until) < today) {
+      warn(loc, 'valid_until ' + doc.valid_until + ' has passed; the document shows as Expired', { field: 'valid_until', value: doc.valid_until });
+    }
+    checkAttributes(doc, loc);
   });
   checkParents(d.documents, documents, 'documents.yaml', 'document', docLoc);
 
@@ -173,6 +213,7 @@ function validate(d) {
       });
     });
     validateColumns(r.key_dates || [], kdCols, (k, j) => atChild(loc, 'key_dates', j, loc.where + ' key_dates entry ' + (j + 1)));
+    checkAttributes(r, loc);
   });
   checkParents(d.regulations, regulations, 'regulations.yaml', 'regulation', regLoc);
 
@@ -203,6 +244,7 @@ function validate(d) {
     (o.topics || []).forEach(t => { if (!topics.has(t)) err(loc, 'topic "' + t + '" is not in topics.yaml', { field: 'topics', value: t, expected: idsIn('Topics') }); });
     if (!o.common_control && !(o.topics || []).length) warn(loc, 'no common_control or topics; it will not appear on any topic page', { field: 'common_control' });
     if (o.accountable_role && !roles.has(o.accountable_role)) err(loc, 'accountable_role "' + o.accountable_role + '" is not in roles.yaml', { field: 'accountable_role', value: o.accountable_role, expected: idsIn('Roles') });
+    checkAttributes(o, loc);
   });
 
   // --- mappings.yaml ---
@@ -241,6 +283,16 @@ function validate(d) {
   rels.forEach((x, i) => {
     if (!x || typeof x !== 'object') return;
     const loc = relLoc(x, i);
+    if (!isMissing(x.type) && !relTypeIds.includes(x.type)) {
+      err(loc, 'type "' + x.type + '" is not in catalog.yaml relationship_types', { field: 'type', value: x.type, expected: relTypeIds.join(' | ') });
+    }
+    if (x.attributes != null) {
+      const a = x.attributes;
+      if (typeof a !== 'object' || Array.isArray(a)) err(loc, 'attributes must be a map of key: value', { field: 'attributes', expected: 'key: value pairs' });
+      else Object.keys(a).forEach(k => {
+        if (!isScalar(a[k])) err(loc, 'attribute "' + k + '" must be text or a number, not a list or map', { field: 'attributes', value: k, expected: 'text or a number' });
+      });
+    }
     const ends = ['from_item', 'to_item'].map(field => {
       const v = x[field];
       if (isMissing(v)) return null; // reported by validateColumns

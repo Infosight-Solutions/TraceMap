@@ -15,7 +15,7 @@ const FIXTURE = path.join(EXAMPLE_DIR, 'tracemap-example.xlsx');
 const EXAMPLE_CATALOG = path.join(EXAMPLE_DIR, 'catalog.yaml');
 const EXAMPLE_NOTE = 'EXAMPLE ROW — delete before importing';
 
-const ENTITY_FILES = ['regulations', 'obligations', 'mappings', 'documents', 'topics', 'controls', 'roles', 'glossary'];
+const ENTITY_FILES = ['regulations', 'obligations', 'mappings', 'documents', 'topics', 'controls', 'roles', 'glossary', 'relationships'];
 
 // Runs a project script with node; returns { status, stdout, stderr }.
 function run(script, args = []) {

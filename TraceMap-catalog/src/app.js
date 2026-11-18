@@ -16,6 +16,7 @@
  *   #/timeline             key dates
  *   #/reviews              items past their review date
  *   #/glossary             plain-language definitions
+ *   #/legend               what the colors, boxes, tags, and terms mean
  *   #/search/<query>       search results
  */
 (function () {
@@ -27,6 +28,31 @@
     return;
   }
   var C = D.catalog || {};
+  // Layout settings. build.js always embeds a complete, resolved object (lib/layouts.js).
+  var L = C.layouts || {
+    index: { tiles: ['topics'], show_applicability_filters: true },
+    browse: { default_group_by: C.group_field || 'category', default_sort: 'sequence', show_columns: ['name', 'type', 'key_date', 'coverage'], display_mode: 'list' },
+    detail: { panels: [] },
+    dashboard: { enabled: false }
+  };
+  // The facet the library groups by when grouping by category (the first Group by button).
+  var GROUP_FIELD = ['date', 'id'].indexOf(L.browse.default_group_by) < 0 ? L.browse.default_group_by : (C.group_field || 'category');
+
+  // Sort a list the way browse views are configured. sequence: items with a sequence first,
+  // lowest first; the rest keep file order. name / id: alphabetical.
+  function sortItems(list, how, nameOf) {
+    var wrapped = list.map(function (x, i) { return { x: x, i: i }; });
+    wrapped.sort(function (a, b) {
+      if (how === 'name') return nameOf(a.x).localeCompare(nameOf(b.x)) || a.i - b.i;
+      if (how === 'id') return String(a.x.id).localeCompare(String(b.x.id)) || a.i - b.i;
+      var sa = a.x.sequence, sb = b.x.sequence;
+      var ha = typeof sa === 'number', hb = typeof sb === 'number';
+      if (ha && hb && sa !== sb) return sa - sb;
+      if (ha !== hb) return ha ? -1 : 1;
+      return a.i - b.i;
+    });
+    return wrapped.map(function (w) { return w.x; });
+  }
 
   // ------------------------------------------------------------------
   // Indexes
@@ -55,6 +81,14 @@
     not_assessed: 'Not yet assessed'
   };
   Object.keys(C.status_labels || {}).forEach(function (k) { LABEL[k] = C.status_labels[k]; });
+  // What each status means: hover text on pills, bars, and dots, and the Legend page.
+  var STATUS_HELP = {
+    verified: 'The requirement is fully addressed in company documentation.',
+    deviations_noted: 'Documentation addresses the requirement, but a known gap remains. The rationale explains it.',
+    verification_pending: 'Not yet shown to be addressed in documentation. The rationale explains what is outstanding.',
+    not_assessed: 'Nobody has compared this requirement with the documentation yet.'
+  };
+  Object.keys(C.status_descriptions || {}).forEach(function (k) { STATUS_HELP[k] = C.status_descriptions[k]; });
 
   var SOURCE_TYPE_LABEL = { mandate: 'Mandate', guidance: 'Guidance', standard: 'Standard', market: 'Market-based' };
   var OBLIGATION_VERB = {
@@ -86,6 +120,29 @@
     }
     return t;
   }
+  // Relationships (relationships.yaml), indexed from both ends: 'kind:id' -> [{ dir, rel, other }].
+  var ITEMS = { regulation: REG, obligation: OBL, document: DOC, topic: TOPIC, control: CTRL };
+  var KIND_LABEL = { regulation: 'Regulation', obligation: 'Requirement', document: 'Document', topic: 'Topic', control: 'Shared control' };
+  var REL_TYPE = byId(C.relationship_types);
+  function has(map, id) { return Object.prototype.hasOwnProperty.call(map, id); }
+  function resolveRef(ref) {
+    ref = String(ref);
+    var c = ref.indexOf(':');
+    if (c > 0 && ITEMS[ref.slice(0, c)]) {
+      var kind = ref.slice(0, c), id = ref.slice(c + 1);
+      return has(ITEMS[kind], id) ? { kind: kind, id: id } : null;
+    }
+    var hits = Object.keys(ITEMS).filter(function (k) { return has(ITEMS[k], ref); });
+    return hits.length === 1 ? { kind: hits[0], id: ref } : null;
+  }
+  var RELS = {};
+  (D.relationships || []).forEach(function (rel) {
+    var a = resolveRef(rel.from_item), b = resolveRef(rel.to_item);
+    if (!a || !b) return;
+    (RELS[a.kind + ':' + a.id] = RELS[a.kind + ':' + a.id] || []).push({ dir: 'out', rel: rel, other: b });
+    (RELS[b.kind + ':' + b.id] = RELS[b.kind + ':' + b.id] || []).push({ dir: 'in', rel: rel, other: a });
+  });
+
   function status(o) { return (MAP[o.id] && MAP[o.id].status) || 'not_assessed'; }
   function isContext(r) { return r.obligation_type === 'context'; }
 
@@ -120,6 +177,7 @@
     return past[0] ? past[0].label + ': ' + keyDateText(past[0]) : '';
   }
   function interval(item) { return item.review_interval_days || C.review_interval_days || 365; }
+  function isExpired(d) { return !!(d && d.valid_until && daysUntil(d.valid_until) < 0); }
   function isOverdue(item) {
     if (!item || !item.last_reviewed) return false;
     return -daysUntil(item.last_reviewed) > interval(item);
@@ -131,7 +189,7 @@
   var state = {
     applies: {},          // applicability id -> true
     facets: {},           // field -> { value: true }
-    groupBy: 'category',
+    groupBy: L.browse.default_group_by === 'date' || L.browse.default_group_by === 'id' ? L.browse.default_group_by : GROUP_FIELD,
     docLayer: 'all'
   };
   function appliesSelected() { return Object.keys(state.applies).filter(function (k) { return state.applies[k]; }); }
@@ -245,13 +303,30 @@
   function link(route, text, cls) { return el('a', { href: '#/' + route, class: cls }, text); }
   function regLink(r) { return link('reg/' + enc(r.id), r.name); }
   function enc(s) { return encodeURIComponent(s); }
-  function pill(st) { return el('span', { class: 'pill st-' + st }, LABEL[st] || st); }
+  function pill(st) { return el('span', { class: 'pill st-' + st, title: STATUS_HELP[st] || null }, LABEL[st] || st); }
+  function itemLink(ref) {
+    var x = ITEMS[ref.kind][ref.id];
+    if (ref.kind === 'regulation') return link('reg/' + enc(x.id), x.name);
+    if (ref.kind === 'obligation') return link('reg/' + enc(x.regulation_id) + '/' + enc(x.id), (REG[x.regulation_id] ? REG[x.regulation_id].name + ' ' : '') + x.control_id + ': ' + x.title);
+    if (ref.kind === 'document') return link('doc/' + enc(x.id), x.id + ': ' + x.title);
+    if (ref.kind === 'topic') return link('topic/' + enc(x.id), x.name);
+    return link('topic/' + enc(x.topic), x.name);
+  }
+  // Attributes as a short "name: value unit" list; the source shows on hover.
+  function attributeList(item) {
+    var list = (item && item.attributes) || [];
+    if (!list.length) return null;
+    return el('dl', { class: 'attrs', 'aria-label': 'Details' }, list.map(function (a) {
+      return el('div', { class: 'attr', title: a.source ? 'Source: ' + a.source : null },
+        el('dt', null, a.name), el('dd', null, String(a.value) + (a.unit ? ' ' + a.unit : '')));
+    }));
+  }
   function roleName(id) { return id && ROLE[id] ? ROLE[id].name : null; }
 
   function bar(c, large) {
     var b = el('div', { class: 'bar' + (large ? ' bar-lg' : ''), role: 'img', 'aria-label': coverageText(c) });
     if (c.total) ['verified', 'deviations_noted', 'verification_pending'].forEach(function (k) {
-      if (c[k]) b.appendChild(el('span', { class: 'b-' + k, style: 'width:' + Math.max(1.5, 100 * c[k] / c.total) + '%' }));
+      if (c[k]) b.appendChild(el('span', { class: 'b-' + k, title: LABEL[k] + ' (' + c[k] + '): ' + STATUS_HELP[k], style: 'width:' + Math.max(1.5, 100 * c[k] / c.total) + '%' }));
     });
     return b;
   }
@@ -271,6 +346,7 @@
     }
     var meta = el('div', { class: 'row', style: 'gap:6px' });
     if (d.restricted) meta.appendChild(el('span', { class: 'tag tag-restricted' }, 'Restricted access'));
+    if (isExpired(d)) meta.appendChild(el('span', { class: 'tag tag-expired', title: 'Valid until ' + fmtDate(d.valid_until) }, 'Expired'));
     if (!d.url && d.status_note) meta.appendChild(el('span', { class: 'sub muted', style: 'font-size:13px' }, d.status_note));
     if (meta.childNodes.length) wrap.appendChild(meta);
     return wrap;
@@ -377,7 +453,7 @@
     return el('footer', { class: 'footer' }, el('div', { class: 'footer-inner' },
       el('div', null, C.footer_note || 'Static snapshot. Links open the authoritative documents in their source system.'),
       el('div', null, 'Built ' + (bm.built_at ? fmtDate(bm.built_at.slice(0, 10)) : '') +
-        (C.version ? ', version ' + C.version : '') + ', tracemap ' + (bm.tool_version || ''))));
+        (C.version ? ', version ' + C.version : '') + ', tracemap ' + (bm.tool_version || ''), ' · ', link('legend', 'Legend'))));
   }
   function crumbs(parts) {
     var n = el('nav', { class: 'crumbs', 'aria-label': 'Breadcrumb' });
@@ -497,34 +573,52 @@
     return wrap;
   }
 
+  // Library columns, chosen by layouts.browse.show_columns. A facet field shows that facet.
+  var REG_COLUMNS = {
+    name: { head: 'Regulation', cell: function (r) {
+      return el('td', null, el('a', { href: '#/reg/' + enc(r.id), style: 'font-weight:600' }, r.name),
+        el('span', { class: 'sub' }, r.id + (r.full_title && r.full_title !== r.name ? ', ' + r.full_title : '')));
+    } },
+    type: { head: 'Type', cell: function (r) { return el('td', null, SOURCE_TYPE_LABEL[r.source_type] || r.source_type); } },
+    key_date: { head: 'Key date', cell: function (r) {
+      var nd = nextDate(r);
+      return el('td', { style: nd ? 'color:#9A4A00;font-weight:600' : null },
+        nd ? nd.label + ': ' + keyDateText(nd) : (r.date_display || lastDateText(r)));
+    } },
+    coverage: { head: 'Documentation coverage', cell: function (r) {
+      var c = regCoverage(r);
+      return el('td', null, isContext(r) ? el('span', { class: 'pill st-context' }, 'Context only') :
+        el('div', { class: 'stack-sm', style: 'gap:6px' }, bar(c), el('span', { style: 'font-size:13px' }, coverageText(c))));
+    } }
+  };
+  function regColumns() {
+    return (L.browse.show_columns || []).map(function (key) {
+      if (REG_COLUMNS[key]) return REG_COLUMNS[key];
+      var f = (C.facets || []).filter(function (x) { return x.field === key; })[0];
+      if (!f) return null;
+      return { head: f.label || f.field, cell: function (r) {
+        return el('td', null, regValues(r, f.field).map(function (v) { return f.values[v] || v; }).join(', '));
+      } };
+    }).filter(Boolean);
+  }
   function regTable(regs) {
-    var tableFacets = (C.facets || []).filter(function (f) { return f.in_table; });
-    var head = el('tr', null, el('th', null, 'Regulation'), el('th', null, 'Type'),
-      tableFacets.map(function (f) { return el('th', null, f.label); }),
-      el('th', null, 'Key date'), el('th', null, 'Documentation coverage'));
+    var cols = regColumns();
+    var head = el('tr', null, cols.map(function (c) { return el('th', null, c.head); }));
     var tbody = el('tbody');
     var groups = groupRegs(regs);
     groups.forEach(function (g) {
-      if (g.label) tbody.appendChild(el('tr', { class: 'group' }, el('td', { colspan: 4 + tableFacets.length }, g.label)));
+      if (g.label) tbody.appendChild(el('tr', { class: 'group' }, el('td', { colspan: cols.length }, g.label)));
       g.items.forEach(function (r) {
-        var nd = nextDate(r);
-        var c = regCoverage(r);
         tbody.appendChild(el('tr', { class: 'clickable', onClick: function (e) { if (e.target.tagName !== 'A') go('reg/' + enc(r.id)); } },
-          el('td', null, el('a', { href: '#/reg/' + enc(r.id), style: 'font-weight:600' }, r.name),
-            el('span', { class: 'sub' }, r.id + (r.full_title && r.full_title !== r.name ? ', ' + r.full_title : ''))),
-          el('td', null, SOURCE_TYPE_LABEL[r.source_type] || r.source_type),
-          tableFacets.map(function (f) { return el('td', null, regValues(r, f.field).map(function (v) { return f.values[v] || v; }).join(', ')); }),
-          el('td', { style: nd ? 'color:#9A4A00;font-weight:600' : null },
-            nd ? nd.label + ': ' + keyDateText(nd) : (r.date_display || lastDateText(r))),
-          el('td', null, isContext(r) ? el('span', { class: 'pill st-context' }, 'Context only') :
-            el('div', { class: 'stack-sm', style: 'gap:6px' }, bar(c), el('span', { style: 'font-size:13px' }, coverageText(c))))));
+          cols.map(function (c) { return c.cell(r); })));
       });
     });
-    if (!regs.length) tbody.appendChild(el('tr', null, el('td', { colspan: 4 + tableFacets.length, class: 'empty' },
+    if (!regs.length) tbody.appendChild(el('tr', null, el('td', { colspan: cols.length, class: 'empty' },
       'No regulations match these selections. Clear a filter or uncheck an applicability box to see more.')));
     return el('div', { class: 'table-wrap' }, el('table', null, el('caption', { class: 'visually-hidden' }, 'Regulations'), el('thead', null, head), tbody));
   }
   function groupRegs(regs) {
+    regs = sortItems(regs, L.browse.default_sort, function (r) { return r.name; });
     if (state.groupBy === 'date') {
       var sorted = regs.slice().sort(function (a, b) {
         var x = nextDate(a), y = nextDate(b);
@@ -534,7 +628,7 @@
       return [{ label: null, items: sorted }];
     }
     if (state.groupBy === 'id') return [{ label: null, items: regs.slice().sort(function (a, b) { return a.id.localeCompare(b.id); }) }];
-    var field = C.group_field || 'category';
+    var field = GROUP_FIELD;
     var order = [];
     var map = {};
     var defs = (C.facets || []).filter(function (f) { return f.field === field; })[0];
@@ -551,7 +645,8 @@
   function librarySection(showIntro) {
     var regs = filteredRegs();
     var seg = el('div', { class: 'seg', role: 'group', 'aria-label': 'Group by' });
-    [['category', 'Category'], ['date', 'Key date'], ['id', 'ID']].forEach(function (g) {
+    var groupFacet = (C.facets || []).filter(function (f) { return f.field === GROUP_FIELD; })[0];
+    [[GROUP_FIELD, groupFacet && groupFacet.label ? groupFacet.label : 'Category'], ['date', 'Key date'], ['id', 'ID']].forEach(function (g) {
       seg.appendChild(el('button', { type: 'button', 'aria-pressed': state.groupBy === g[0] ? 'true' : 'false',
         onClick: function () { state.groupBy = g[0]; render(true); } }, g[1]));
     });
@@ -584,7 +679,8 @@
       el('span', null, el('span', { class: 'swatch', style: 'background:#1B3A5C' }), LABEL.verified),
       el('span', null, el('span', { class: 'swatch', style: 'background:#D98B2B' }), LABEL.deviations_noted),
       el('span', null, el('span', { class: 'swatch', style: 'background:#8E1B1B' }), LABEL.verification_pending),
-      el('span', null, el('span', { class: 'swatch', style: 'background:#E3E1DA;border:1px solid #A9A69C' }), LABEL.not_assessed));
+      el('span', null, el('span', { class: 'swatch', style: 'background:#E3E1DA;border:1px solid #A9A69C' }), LABEL.not_assessed),
+      link('legend', 'What these mean'));
   }
 
   // ------------------------------------------------------------------
@@ -600,14 +696,14 @@
         el('h1', { class: 'page-title' }, C.home_heading || 'Find the requirements that apply to your work'),
         el('p', { class: 'lede' }, C.home_intro || 'Start from a plain-language topic or a regulation you already know. Every requirement links to the documents that address it.'),
         form),
-      applicabilityPanel(),
+      L.index.show_applicability_filters ? applicabilityPanel() : null,
       reviewBanner(),
       upcomingPanel(),
-      el('section', { class: 'stack', style: 'gap:20px' },
+      (L.index.tiles || []).indexOf('topics') >= 0 ? el('section', { class: 'stack', style: 'gap:20px' },
         el('div', { class: 'stack-sm' },
           el('h2', { class: 'section-title' }, 'Start with what you are working on'),
           el('p', { class: 'section-intro' }, 'Each topic lists every requirement on that subject, across all regulations, in plain language first.')),
-        topicTiles()),
+        topicTiles()) : null,
       librarySection(true)
     ];
   }
@@ -729,68 +825,155 @@
       el('div', { style: 'overflow-x:auto' }, requirementTable(obls)));
   }
 
+  // ------------------------------------------------------------------
+  // Regulation page: panels
+  // ------------------------------------------------------------------
+  // The page is a list of panels, in the order given by layouts.detail.panels (catalog.yaml).
+  // A panel is { width, render }: render(ctx) returns a DOM node, or null when it has nothing to
+  // show. Two half-width panels next to each other share a row. ctx carries what changes per
+  // render; panels read the shared indexes (REG, DOC, MAP, oblsByReg, ...) directly.
+  //   ctx = { kind: 'regulation', item, options, layouts, route: { openObl } }
+  // lib/layouts.js DETAIL_PANELS lists the same names (a test checks they match).
+  var PANELS = {
+    identity:       { width: 'full', render: panelIdentity },
+    category_boxes: { width: 'full', render: panelCategoryBoxes },
+    applies_when:   { width: 'half', render: panelAppliesWhen },
+    timeline:       { width: 'half', render: panelTimeline },
+    status:         { width: 'full', render: panelStatus },
+    requirements:   { width: 'full', render: panelRequirements },
+    relationships:  { width: 'full', render: panelRelationships },
+    evidence:       { width: 'full', render: panelEvidence }
+  };
+  window.TRACEMAP_PANELS = Object.keys(PANELS);
+
+  function renderPanels(list, ctx) {
+    var out = [];
+    var half = null;
+    (list || []).forEach(function (entry) {
+      var def = PANELS[entry.panel];
+      if (!def) return;
+      var options = {};
+      Object.keys(entry).forEach(function (k) { if (k !== 'panel') options[k] = entry[k]; });
+      var node = def.render(Object.assign({}, ctx, { options: options }));
+      if (!node) return;
+      node.setAttribute('data-panel', entry.panel);
+      if (def.width === 'half') {
+        if (half) { out.push(el('div', { class: 'grid-2' }, half, node)); half = null; } else half = node;
+        return;
+      }
+      if (half) { out.push(half); half = null; }
+      out.push(node);
+    });
+    if (half) out.push(half);
+    return out;
+  }
+
   function pageReg(id, openObl) {
     var r = REG[id];
     if (!r) return notFound('regulation');
-    var obls = oblsByReg[id] || [];
-    var c = regCoverage(r);
+    return [crumbs([['Home', ''], ['Regulations', 'regulations'], [r.name]])].concat(
+      renderPanels(L.detail.panels, { kind: 'regulation', item: r, layouts: L, route: { openObl: openObl } }));
+  }
+
+  function panelIdentity(ctx) {
+    var r = ctx.item;
     var nd = nextDate(r);
-    var ctx = isContext(r);
-
-    var tags = el('div', { class: 'row', style: 'gap:8px' },
-      el('span', { class: 'mono', style: 'font-weight:500;color:#333C48;margin-right:4px' }, r.id),
-      el('span', { class: 'tag' }, SOURCE_TYPE_LABEL[r.source_type]),
-      el('span', { class: 'tag' }, OBLIGATION_VERB[r.obligation_type]),
-      (C.facets || []).map(function (f) {
-        return regValues(r, f.field).map(function (v) { return el('span', { class: 'tag tag-quiet' }, f.values[v] || v); });
-      }),
-      nd ? el('span', { class: 'tag tag-soon' }, 'Upcoming: ' + keyDateText(nd)) : null);
-
     var regDoc = r.reg_document ? DOC[r.reg_document] : null;
     var buttons = el('div', { class: 'row' },
       regDoc && regDoc.url ? el('a', { class: 'btn btn-primary', href: regDoc.url }, 'Open ' + regDoc.id + ' ' + (C.reg_doc_label || 'reference file')) : null,
       r.source_url ? el('a', { class: 'btn', href: r.source_url, target: '_blank', rel: 'noopener' }, 'Official source') : null,
       (r.key_dates || []).length ? link('timeline', 'See on timeline', 'btn') : null);
+    return el('section', { class: 'stack', style: 'gap:16px' },
+      el('div', { class: 'row', style: 'gap:8px' },
+        el('span', { class: 'mono', style: 'font-weight:500;color:#333C48;margin-right:4px' }, r.id),
+        nd ? el('span', { class: 'tag tag-soon' }, 'Upcoming: ' + keyDateText(nd)) : null),
+      el('h1', { class: 'page-title' }, r.name),
+      r.full_title && r.full_title !== r.name ? el('div', { class: 'muted', style: 'font-size:17px;margin-top:-6px' }, r.full_title) : null,
+      r.summary ? el('p', { class: 'lede' }, plain(r.summary)) : null,
+      attributeList(r),
+      buttons);
+  }
 
-    var applyBox = el('section', { class: 'panel stack' }, el('h2', null, 'Does this apply to my work?'),
+  // One box per category: Type, Obligation, then each catalog facet. Every possible value is
+  // listed; the ones that apply are shaded, checked, and listed first. Long lists show
+  // options.max_values (default 6) and a "+ N more" button, but never hide a value that applies.
+  function panelCategoryBoxes(ctx) {
+    var r = ctx.item;
+    var max = ctx.options.max_values || 6;
+    var defs = [
+      { field: 'source_type', label: 'Type', values: SOURCE_TYPE_LABEL },
+      { field: 'obligation_type', label: 'Obligation', values: OBLIGATION_VERB }
+    ].concat(C.facets || []);
+    return el('section', { class: 'cat-grid', 'aria-label': 'Categories' }, defs.map(function (f) {
+      return categoryBox(f.label || f.field, f.values || {}, regValues(r, f.field), max);
+    }));
+  }
+  function categoryBox(label, values, active, max) {
+    var keys = Object.keys(values);
+    active.forEach(function (v) { if (keys.indexOf(v) < 0) keys.push(v); });
+    var on = keys.filter(function (k) { return active.indexOf(k) >= 0; });
+    var ordered = on.concat(keys.filter(function (k) { return active.indexOf(k) < 0; }));
+    var limit = Math.max(max || 6, on.length);
+    var items = ordered.map(function (k, i) {
+      var isOn = active.indexOf(k) >= 0;
+      return el('li', { class: isOn ? 'cat-on' : null, hidden: i >= limit ? true : null },
+        isOn ? svg(ICON.check, null, 16) : null,
+        el('span', null, values[k] || k),
+        el('span', { class: 'visually-hidden' }, isOn ? ', applies' : ', does not apply'));
+    });
+    var extra = ordered.length - limit;
+    var more = extra > 0 ? el('button', { type: 'button', class: 'linkbtn cat-more', 'aria-expanded': 'false',
+      onClick: function (e) { items.forEach(function (li) { li.hidden = false; }); e.currentTarget.remove(); } }, '+ ' + extra + ' more') : null;
+    return el('div', { class: 'cat-box' }, el('div', { class: 'cat-label' }, label), el('ul', { class: 'cat-values' }, items), more);
+  }
+
+  function panelAppliesWhen(ctx) {
+    var r = ctx.item;
+    return el('section', { class: 'panel stack' }, el('h2', null, 'Does this apply to my work?'),
       (r.applies_when || []).length ? el('div', { class: 'stack-sm' }, el('div', { class: 'kicker', style: 'color:#1B3A5C' }, 'Applies when'),
         el('ul', { class: 'checklist' }, r.applies_when.map(function (s) { return el('li', null, svg(ICON.check, '#1B3A5C'), el('span', null, plain(s))); }))) : null,
       (r.does_not_apply || []).length ? el('div', { class: 'stack-sm' }, el('div', { class: 'kicker' }, 'Does not apply, or applies differently'),
         el('ul', { class: 'checklist' }, r.does_not_apply.map(function (s) { return el('li', { class: 'muted' }, svg(ICON.dash, '#545C68'), el('span', null, plain(s))); }))) : null,
       roleName(r.accountable_role) ? el('div', { class: 'muted', style: 'font-size:14px;border-top:1px solid #E7E8E3;padding-top:12px' },
         'Not sure? Ask the ' + roleName(r.accountable_role) + ' before the work starts.') : null);
+  }
 
-    var datesBox = (r.key_dates || []).length ? el('section', { class: 'panel stack' }, el('h2', null, 'Key dates'), timelineList(r.key_dates.map(function (k) { return { k: k }; }), false)) : null;
+  function panelTimeline(ctx) {
+    var r = ctx.item;
+    if (!(r.key_dates || []).length) return null;
+    return el('section', { class: 'panel stack' }, el('h2', null, 'Key dates'), timelineList(r.key_dates.map(function (k) { return { k: k }; }), false));
+  }
 
-    var out = [
-      crumbs([['Home', ''], ['Regulations', 'regulations'], [r.name]]),
-      el('section', { class: 'stack', style: 'gap:16px' }, tags,
-        el('h1', { class: 'page-title' }, r.name),
-        r.full_title && r.full_title !== r.name ? el('div', { class: 'muted', style: 'font-size:17px;margin-top:-6px' }, r.full_title) : null,
-        r.summary ? el('p', { class: 'lede' }, plain(r.summary)) : null,
-        buttons),
-      el('div', { class: datesBox ? 'grid-2' : '' }, applyBox, datesBox)
-    ];
-    if (r.version_note) out.push(el('div', { class: 'callout' }, svg(ICON.warn, '#7A3500', 22),
+  // Version callout, then coverage counts (or, for a context-only regulation, why it is listed).
+  function panelStatus(ctx) {
+    var r = ctx.item;
+    var parts = [];
+    if (r.version_note) parts.push(el('div', { class: 'callout' }, svg(ICON.warn, '#7A3500', 22),
       el('div', null, el('strong', null, 'Version assessed: ' + (r.version_tracked || '')), el('div', null, plain(r.version_note)))));
-
-    if (ctx) {
-      out.push(el('div', { class: 'panel stack-sm' }, el('h2', null, 'Why this is listed'),
+    if (isContext(r)) {
+      parts.push(el('div', { class: 'panel stack-sm' }, el('h2', null, 'Why this is listed'),
         el('p', null, plain(r.context_note || 'This is listed for context. Documentation coverage is not tracked against it.'))));
-      return out;
+    } else {
+      var c = regCoverage(r);
+      parts.push(el('section', { class: 'stack' },
+        el('div', { class: 'spread' }, el('h2', { class: 'section-title' }, 'Documentation coverage'),
+          el('div', { class: 'muted', style: 'font-size:14px' },
+            r.last_reviewed ? 'Last reviewed ' + fmtDate(r.last_reviewed) + (roleName(r.accountable_role) ? ' by the ' + roleName(r.accountable_role) : '') : 'No review date recorded',
+            isOverdue(r) ? el('span', { class: 'overdue' }, ', review overdue') : null)),
+        el('div', { class: 'stats' },
+          el('div', { class: 'stat' }, el('div', { class: 'stat-num' }, c.total), el('div', { class: 'stat-label' }, 'Requirements in scope')),
+          STATUS_KEYS.map(function (k) {
+            return el('div', { class: 'stat k-' + k, title: STATUS_HELP[k] }, el('div', { class: 'stat-num' }, c[k]), el('div', { class: 'stat-label' }, LABEL[k]));
+          }))));
     }
+    return el('div', { class: 'panel-group' }, parts);
+  }
 
-    out.push(el('section', { class: 'stack' },
-      el('div', { class: 'spread' }, el('h2', { class: 'section-title' }, 'Documentation coverage'),
-        el('div', { class: 'muted', style: 'font-size:14px' },
-          r.last_reviewed ? 'Last reviewed ' + fmtDate(r.last_reviewed) + (roleName(r.accountable_role) ? ' by the ' + roleName(r.accountable_role) : '') : 'No review date recorded',
-          isOverdue(r) ? el('span', { class: 'overdue' }, ', review overdue') : null)),
-      el('div', { class: 'stats' },
-        el('div', { class: 'stat' }, el('div', { class: 'stat-num' }, c.total), el('div', { class: 'stat-label' }, 'Requirements in scope')),
-        STATUS_KEYS.map(function (k) {
-          return el('div', { class: 'stat k-' + k }, el('div', { class: 'stat-num' }, c[k]), el('div', { class: 'stat-label' }, LABEL[k]));
-        }))));
-
+  function panelRequirements(ctx) {
+    var r = ctx.item;
+    if (isContext(r)) return null;
+    var openObl = ctx.route.openObl;
+    var obls = sortItems(oblsByReg[r.id] || [], 'sequence');
     var tbody = el('tbody');
     var families = [];
     var fam = {};
@@ -811,7 +994,7 @@
           el('td', null, el('button', { type: 'button', class: 'linkbtn', 'aria-expanded': open ? 'true' : 'false', onClick: toggle, style: 'text-align:left;font-weight:600;text-decoration:none;color:#1B2430' }, o.title)),
           el('td', null, el('div', { class: 'stack-sm' }, pill(status(o)), isOverdue(m) ? el('span', { class: 'overdue' }, 'Review overdue') : null)),
           el('td', { style: 'font-size:14px' }, ds.length ? ds.join(', ') : el('span', { class: 'muted' }, 'None mapped yet'))));
-        if (open) tbody.appendChild(el('tr', null, el('td', { colspan: 4, style: 'background:#F7F9FB;padding:16px' }, detailPanel(o))));
+        if (open) tbody.appendChild(el('tr', null, el('td', { colspan: 4, style: 'background:#F7F9FB;padding:16px' }, obligationDetail(o))));
       });
     });
     var more = (r.total_obligations || 0) - obls.length;
@@ -819,17 +1002,79 @@
       more + ' more requirement' + (more > 1 ? 's are' : ' is') + ' in scope but not yet added to the catalog. They count as not yet assessed.')));
     if (!obls.length && more <= 0) tbody.appendChild(el('tr', null, el('td', { colspan: 4, class: 'empty' }, 'No requirements have been added for this regulation yet.')));
 
-    out.push(el('section', { class: 'stack' },
+    return el('section', { class: 'stack' },
       el('div', { class: 'spread', style: 'align-items:center' }, el('h2', { style: 'font-size:22px;font-weight:600' }, 'Requirements'),
         csvButton('Requirements CSV', function () { downloadCsv(r.id + '-requirements-' + fileStamp() + '.csv', REQ_HEADER, requirementRows([r])); })),
       el('p', { class: 'muted' }, 'Select a requirement to see its wording, the documents at each layer, and the other regulations it overlaps with.'),
       el('div', { class: 'table-wrap' }, el('table', null,
         el('thead', null, el('tr', null, el('th', null, 'ID'), el('th', null, 'Requirement'), el('th', null, 'Documentation status'), el('th', null, 'Documents'))),
-        tbody))));
-    return out;
+        tbody)));
   }
 
-  function detailPanel(o) {
+  // Links from relationships.yaml, read from this item's side: a link to it shows the inverse label.
+  function panelRelationships(ctx) {
+    var links = RELS[ctx.kind + ':' + ctx.item.id] || [];
+    var body;
+    if (!links.length) {
+      body = el('p', { class: 'muted' }, 'No related items are recorded for this ' + ctx.kind + '.');
+    } else {
+      var groups = [];
+      var byLabel = {};
+      links.forEach(function (x) {
+        var t = REL_TYPE[x.rel.type] || { label: x.rel.type, inverse_label: x.rel.type };
+        var label = x.dir === 'out' ? t.label : t.inverse_label;
+        if (!byLabel[label]) { byLabel[label] = []; groups.push(label); }
+        byLabel[label].push(x);
+      });
+      body = el('div', { class: 'stack' }, groups.map(function (label) {
+        return el('div', { class: 'stack-sm' }, el('div', { class: 'kicker' }, label),
+          el('ul', { class: 'rel-list' }, byLabel[label].map(function (x) {
+            return el('li', null, el('span', { class: 'rel-kind' }, KIND_LABEL[x.other.kind]), itemLink(x.other),
+              x.rel.description ? el('span', { class: 'muted' }, x.rel.description) : null);
+          })));
+      }));
+    }
+    return el('section', { class: 'panel stack' }, el('h2', null, 'Related items'), body);
+  }
+
+  // Every document mapped to at least one of this regulation's requirements, by layer, with how
+  // many requirements each supports. Empty layers show the layer's empty_text, as in the trace.
+  function panelEvidence(ctx) {
+    var r = ctx.item;
+    if (isContext(r)) return null;
+    var counts = {};
+    (oblsByReg[r.id] || []).forEach(function (o) {
+      var seen = {};
+      ((MAP[o.id] || {}).documents || []).forEach(function (e) {
+        var d = DOC[e.document_id];
+        if (!d) return;
+        var l = e.layer || d.layer || '_ref';
+        if (seen[l + ' ' + d.id]) return;
+        seen[l + ' ' + d.id] = true;
+        counts[l] = counts[l] || {};
+        counts[l][d.id] = (counts[l][d.id] || 0) + 1;
+      });
+    });
+    var layers = LAYERS.map(function (l) { return { id: l.id, name: l.name || l.id, empty: l.empty_text }; });
+    if (counts._ref) layers.push({ id: '_ref', name: 'Reference' });
+    var any = Object.keys(counts).length > 0;
+    var grid = el('div', { class: 'trace', style: '--layers:' + Math.min(layers.length, 4) }, layers.map(function (l) {
+      var ids = Object.keys(counts[l.id] || {}).sort(function (a, b) { return counts[l.id][b] - counts[l.id][a] || a.localeCompare(b); });
+      return el('div', { class: 'layer' + (ids.length ? '' : ' layer-empty') },
+        el('div', { class: 'layer-name' }, l.name),
+        ids.length ? ids.map(function (id) {
+          var n = counts[l.id][id];
+          return el('div', { class: 'stack-sm', style: 'gap:2px' }, docLink(DOC[id]),
+            el('span', { class: 'muted', style: 'font-size:13px' }, 'Supports ' + n + ' requirement' + (n > 1 ? 's' : '')));
+        }) : el('div', { style: 'font-size:14px;color:#333C48' }, l.empty || 'Nothing mapped at this layer'));
+    }));
+    return el('section', { class: 'stack' },
+      el('div', { class: 'stack-sm' }, el('h2', { style: 'font-size:22px;font-weight:600' }, 'Documents this regulation relies on'),
+        el('p', { class: 'muted' }, 'Every document mapped to at least one of its requirements, by layer.')),
+      any ? grid : el('div', { class: 'panel empty' }, 'No documents are mapped to these requirements yet.'));
+  }
+
+  function obligationDetail(o) {
     var m = MAP[o.id] || {};
     var byLayer = {};
     LAYERS.forEach(function (l) { byLayer[l.id] = []; });
@@ -928,7 +1173,7 @@
           var list = (oblsByCtrl[cc.id] || []).filter(function (o) { return o.regulation_id === r.id; });
           usedTotal += list.length;
           row.appendChild(el('td', { class: 'cell' }, list.length ? list.map(function (o) {
-            return el('div', null, el('a', { href: '#/reg/' + enc(r.id) + '/' + enc(o.id), title: o.title + ': ' + LABEL[status(o)], style: 'text-decoration:none' },
+            return el('div', null, el('a', { href: '#/reg/' + enc(r.id) + '/' + enc(o.id), title: o.title + ': ' + LABEL[status(o)] + '. ' + STATUS_HELP[status(o)], style: 'text-decoration:none' },
               el('span', { class: 'dotmark dm-' + status(o), 'aria-hidden': 'true' }), el('span', { class: 'cell-id' }, o.control_id)),
               el('span', { class: 'visually-hidden' }, ', ' + LABEL[status(o)]));
           }) : el('span', { class: 'muted', 'aria-label': 'Not covered by this regulation' }, '')));
@@ -967,9 +1212,9 @@
       seg.appendChild(el('button', { type: 'button', 'aria-pressed': state.docLayer === g[0] ? 'true' : 'false',
         onClick: function () { state.docLayer = g[0]; render(true); } }, g[1]));
     });
-    var list = D.documents.filter(function (d) {
+    var list = sortItems(D.documents.filter(function (d) {
       return state.docLayer === 'all' || d.layer === state.docLayer || (state.docLayer === '_ref' && !d.layer);
-    });
+    }), L.browse.default_sort, function (d) { return d.title; });
     var tbody = el('tbody');
     list.forEach(function (d) {
       var n = (oblsByDoc[d.id] || []).length;
@@ -1003,10 +1248,13 @@
         el('div', { class: 'row', style: 'gap:8px' }, el('span', { class: 'mono' }, d.id),
           el('span', { class: 'tag' }, LAYER[d.layer] ? LAYER[d.layer].name : 'Reference'),
           d.doc_type ? el('span', { class: 'tag tag-quiet' }, d.doc_type) : null,
-          d.restricted ? el('span', { class: 'tag tag-restricted' }, 'Restricted access') : null),
+          d.restricted ? el('span', { class: 'tag tag-restricted' }, 'Restricted access') : null,
+          isExpired(d) ? el('span', { class: 'tag tag-expired' }, 'Expired') : null),
         el('h1', { class: 'page-title' }, d.title),
         el('div', { class: 'muted' }, [d.revision, d.date_filed ? 'filed ' + fmtDate(d.date_filed) : null,
-          d.last_reviewed ? 'last reviewed ' + fmtDate(d.last_reviewed) : null].filter(Boolean).join(', ')),
+          d.last_reviewed ? 'last reviewed ' + fmtDate(d.last_reviewed) : null,
+          d.valid_until ? (isExpired(d) ? 'expired ' : 'valid until ') + fmtDate(d.valid_until) : null].filter(Boolean).join(', ')),
+        attributeList(d),
         d.status_note ? el('p', null, d.status_note) : null,
         d.url ? el('div', null, el('a', { class: 'btn btn-primary', href: d.url }, 'Open document')) : null,
         isOverdue(d) ? el('span', { class: 'overdue' }, 'Review overdue') : null),
@@ -1062,6 +1310,48 @@
       el('section', { class: 'panel' }, list.length ? el('dl', { class: 'glossary', style: 'margin:0' }, list.map(function (g) {
         return [el('dt', null, g.term + ((g.aliases || []).length ? ' (' + g.aliases.join(', ') + ')' : '')), el('dd', null, g.definition)];
       })) : el('div', { class: 'empty' }, 'No glossary terms yet.'))
+    ];
+  }
+
+  // What a reader needs to read a regulation page: status colors, the category box convention,
+  // tags, relationship wording, document layers, and the core vocabulary. Not a page tour.
+  function pageLegend() {
+    var row = function (key, text) { return el('div', { class: 'legend-row' }, el('div', { class: 'legend-key' }, key), el('div', null, text)); };
+    var section = function (title, intro, body) {
+      return el('section', { class: 'panel stack' }, el('h2', null, title), intro ? el('p', { class: 'muted' }, intro) : null, body);
+    };
+    var interval = C.review_interval_days || 365;
+    var types = C.relationship_types || [];
+    return [
+      el('section', { class: 'stack' }, el('h1', { class: 'page-title' }, 'Legend'),
+        el('p', { class: 'lede' }, 'What the colors, boxes, and labels in this catalog mean.')),
+      section('Documentation status', 'Each requirement has one status. Colors are the same everywhere: on labels, coverage bars, and the shared controls grid. Hover over any of them for this explanation.',
+        el('div', { class: 'legend-rows' }, STATUS_KEYS.map(function (k) { return row(pill(k), STATUS_HELP[k]); }).concat([
+          row(el('span', { class: 'pill st-context' }, 'Context only'), 'Listed for context. Documentation coverage is not tracked against it.'),
+          row(el('div', { style: 'width:160px' }, bar({ verified: 5, deviations_noted: 2, verification_pending: 1, not_assessed: 2, total: 10 })),
+            'A coverage bar: each color is the share of requirements with that status. The empty part has not been assessed.')
+        ]))),
+      section('Category boxes', 'Each regulation page shows one box per way of sorting regulations. Every possible value is listed; the ones that apply to this regulation are shaded, checked, and listed first.',
+        el('div', { class: 'row', style: 'align-items:flex-start;gap:24px' },
+          el('div', { style: 'width:200px' }, categoryBox('Type', SOURCE_TYPE_LABEL, ['standard'], 6)),
+          el('p', { style: 'flex:1 1 280px' }, 'In this example the regulation is a standard. Long lists show the first few values and a "more" link; a value that applies is never hidden.'))),
+      section('Tags', null, el('div', { class: 'legend-rows' },
+        row(el('span', { class: 'tag tag-soon' }, 'Upcoming: Mar 31'), 'A key date is coming up. The home page counts down the days.'),
+        row(el('span', { class: 'overdue' }, 'Review overdue'), 'Last reviewed more than ' + interval + ' days ago (or the item\'s own review interval).'),
+        row(el('span', { class: 'tag tag-expired' }, 'Expired'), 'The document is past its valid-until date and may no longer be current.'),
+        row(el('span', { class: 'tag tag-restricted' }, 'Restricted access'), 'Only some people can open this document. The catalog itself does not control access.'),
+        row(el('span', { class: 'tag tag-quiet' }, 'Policy'), 'A descriptive label, such as a document type.'))),
+      types.length ? section('Relationships', 'How related items are described. Each link reads one way from one item and the other way from the item it points to.',
+        el('div', { class: 'legend-rows' }, types.map(function (t) {
+          return row(el('strong', null, t.label + (t.inverse_label !== t.label ? ' / ' + t.inverse_label : '')), t.description || '');
+        }))) : null,
+      LAYERS.length ? section('Document layers', 'Documents are arranged in layers, from what the company commits to down to the records that show it happened.',
+        el('div', { class: 'legend-rows' }, LAYERS.map(function (l, i) { return row(el('strong', null, (i + 1) + '. ' + (l.name || l.id)), l.description || ''); }))) : null,
+      section('Terms', null, el('dl', { class: 'glossary', style: 'margin:0' },
+        el('dt', null, 'Regulation'), el('dd', null, 'A law, standard, framework, or guidance the company tracks. Some are mandatory; others are followed because customers ask or by choice.'),
+        el('dt', null, 'Requirement'), el('dd', null, 'One specific thing a regulation asks for. Each requirement has a documentation status.'),
+        el('dt', null, 'Evidence'), el('dd', null, 'The documents that show a requirement is addressed: policies, standards, procedures, and records, arranged in the layers above.'),
+        el('dt', null, 'Facet'), el('dd', null, 'A way of sorting regulations, such as where it applies or what it covers. Facets are the filters in the regulation library and the boxes on each regulation page.')))
     ];
   }
 
@@ -1126,6 +1416,7 @@
       case 'timeline': content = pageTimeline(); break;
       case 'reviews': content = pageReviews(); break;
       case 'glossary': content = pageGlossary(); break;
+      case 'legend': content = pageLegend(); break;
       case 'search': content = pageSearch(parts.slice(1).join('/')); break;
       default: content = notFound('page');
     }

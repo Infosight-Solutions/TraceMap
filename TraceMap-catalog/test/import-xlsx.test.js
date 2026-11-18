@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const {
   EXAMPLE_DIR, FIXTURE, EXAMPLE_CATALOG, ENTITY_FILES,
-  run, tempDir, readYaml, loadData, editWorkbook, headerIndex, trimTrailing,
+  run, tempDir, copyExample, readYaml, loadData, editYaml, editWorkbook, headerIndex, trimTrailing,
 } = require('./helpers');
 
 const BLANK_ARGS = out => ['--catalog', EXAMPLE_CATALOG, '--out', out];
@@ -274,10 +274,105 @@ test('file-level failures exit 2', async t => {
 
 test('a newer minor template version imports with a warning', async t => {
   const dir = tempDir(t);
-  const file = await editWorkbook(FIXTURE, path.join(dir, 'v1-1.xlsx'), wb => { wb.getWorksheet('Instructions').getCell('C2').value = '1.1'; });
+  const file = await editWorkbook(FIXTURE, path.join(dir, 'v1-9.xlsx'), wb => { wb.getWorksheet('Instructions').getCell('C2').value = '1.9'; });
   const res = importFile(file, path.join(dir, 'out'));
   assert.equal(res.status, 0, res.stderr);
   assert.match(res.stdout, /newer than this importer/);
+});
+
+test('a 1.0 workbook without the new sheets, C3, or new columns imports with warnings', async t => {
+  const dir = tempDir(t);
+  const file = await editWorkbook(FIXTURE, path.join(dir, 'v1-0.xlsx'), wb => {
+    wb.getWorksheet('Instructions').getCell('C2').value = '1.0';
+    wb.getWorksheet('Instructions').getCell('C3').value = null; // 1.0 templates had no C3: schema 1.0
+    wb.removeWorksheet(wb.getWorksheet('Relationships').id);
+    wb.removeWorksheet(wb.getWorksheet('Attributes').id);
+    const reg = wb.getWorksheet('Regulations');
+    reg.spliceColumns(headerIndex(reg).Sequence, 1);
+  });
+  const out = path.join(dir, 'out');
+  const res = importFile(file, out);
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /Relationships row —: Sheet not in this older template \(1\.0\)/);
+  assert.match(res.stdout, /Regulations row 1, Sequence: Column not in this older template/);
+  assert.match(res.stdout, /Attributes row —: Sheet not in this older template/);
+  assert.doesNotMatch(res.stdout, /schema_version|C3/);
+  assert.deepEqual(readYaml(path.join(out, 'relationships.yaml')).relationships, []);
+});
+
+test('imported YAML files start with the data schema version; a newer major in C3 is refused', async t => {
+  const dir = tempDir(t);
+  const out = path.join(dir, 'out');
+  assert.equal(importFile(FIXTURE, out).status, 0);
+  const { SCHEMA_VERSION } = require('../lib/schema');
+  for (const f of ENTITY_FILES) assert.ok(fs.readFileSync(path.join(out, `${f}.yaml`), 'utf8').startsWith(`schema_version: '${SCHEMA_VERSION}'\n`), f);
+
+  const v9 = await editWorkbook(FIXTURE, path.join(dir, 'v9.xlsx'), wb => { wb.getWorksheet('Instructions').getCell('C3').value = '9.0'; });
+  const res = importFile(v9, path.join(dir, 'out9'));
+  assert.equal(res.status, 2);
+  assert.match(res.stderr, /workbook \(Instructions C3\) is schema 9\.0, newer than this TraceMap/);
+});
+
+test('attributes rows need a known Item Kind and an existing Item ID', async t => {
+  const dir = tempDir(t);
+  const file = await editWorkbook(FIXTURE, path.join(dir, 'bad-attr.xlsx'), wb => {
+    const ws = wb.getWorksheet('Attributes');
+    ws.addRow(['topic', 'access', 'Owner', 'ciso']);
+    ws.addRow(['document', 'NOPE', 'Pages', '3']);
+  });
+  const out = path.join(dir, 'out');
+  assert.equal(importFile(file, out).status, 1);
+  const report = fs.readFileSync(path.join(out, 'import-report.md'), 'utf8');
+  assert.match(report, /\| Attributes \| 4 \| Item Kind \| `topic` \| `regulation \\\| obligation \\\| document` \|/);
+  assert.match(report, /\| Attributes \| 5 \| Item ID \| `NOPE` \| `an existing ID on the Documents sheet` \|/);
+});
+
+test('round trip keeps sequence, parent, attributes, relationships, dates, and x- fields', async t => {
+  const src = copyExample(t);
+  editYaml(src, 'regulations.yaml', doc => {
+    const [a, b] = doc.regulations;
+    Object.assign(a, { sequence: 2, created_at: '2025-01-02', modified_at: '2026-03-04', 'x-owner': 'grc-team', 'x-score': 7 });
+    b.parent = a.id;
+    b.key_dates[0]['x-source'] = 'Official Journal';
+  });
+  editYaml(src, 'documents.yaml', doc => {
+    Object.assign(doc.documents[1], { parent: doc.documents[0].id, valid_until: '2030-12-31' });
+    doc.documents[2].attributes = [{ name: 'Pages', value: '14', unit: 'pages', source: 'DMS' }];
+  });
+  editYaml(src, 'obligations.yaml', doc => { doc.obligations[0].attributes = [{ name: 'Effort', value: 'low' }]; });
+  editYaml(src, 'relationships.yaml', doc => {
+    doc.relationships = [{
+      from_item: 'topic:logging', to_item: 'control:logging', type: 'related', description: 'Same subject',
+      attributes: { strength: 'strong', reviewed_by: 'ciso' }, created_at: '2026-01-01', 'x-ticket': 'GRC-142',
+    }];
+  });
+  const xlsx = path.join(src, 'export.xlsx');
+  assert.equal(run('scripts/generate-template.js', ['--populate', src, '--out', xlsx]).status, 0);
+  const out = path.join(src, 'imported');
+  const res = importFile(xlsx, out);
+  assert.equal(res.status, 0, res.stderr);
+  assertSameRecords(out, src);
+});
+
+test('an x- field holding a list is reported on export and left out; other fields still export', t => {
+  const src = copyExample(t);
+  editYaml(src, 'roles.yaml', doc => { doc.roles[0]['x-members'] = ['a', 'b']; doc.roles[0].legacy_note = 'old'; });
+  const res = run('scripts/generate-template.js', ['--populate', src, '--out', path.join(src, 'x.xlsx')]);
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stderr, /Roles: field "x-members" holds a list or map/);
+  assert.match(res.stderr, /Roles: field "legacy_note" has no column; dropped from 1 record\(s\)\. Rename it to x-legacy_note to keep it\./);
+});
+
+test('export stops when a relationship attribute contains the | separator', t => {
+  const src = copyExample(t);
+  editYaml(src, 'relationships.yaml', doc => {
+    doc.relationships = [{ from_item: 'topic:logging', to_item: 'control:logging', type: 'related', attributes: { note: 'a | b' } }];
+  });
+  const out = path.join(src, 'x.xlsx');
+  const res = run('scripts/generate-template.js', ['--populate', src, '--out', out]);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /attribute "note: a \| b" contains "\|"/);
+  assert.equal(fs.existsSync(out), false);
 });
 
 test('a successful import removes a stale import-report.md', t => {

@@ -22,6 +22,45 @@ const SOURCE_TYPES     = ['mandate', 'guidance', 'standard', 'market'];
 const OBLIGATION_TYPES = ['compliant_with', 'certified_to', 'aligned_with', 'implements', 'context'];
 const STATUSES         = ['verified', 'deviations_noted', 'verification_pending', 'not_assessed'];
 
+// Relationship types used when catalog.yaml has no relationship_types section. Listing that
+// section replaces these entirely. label reads from from_item; inverse_label from to_item.
+const DEFAULT_RELATIONSHIP_TYPES = [
+  { id: 'upstream',   label: 'Upstream of',   inverse_label: 'Downstream of', description: 'The first item comes before the second and shapes it, such as a policy upstream of the procedures that carry it out.' },
+  { id: 'downstream', label: 'Downstream of', inverse_label: 'Upstream of',   description: 'The first item follows from the second, such as a procedure downstream of its policy.' },
+  { id: 'requires',   label: 'Requires',      inverse_label: 'Required by',   description: 'The first item cannot be met without the second.' },
+  { id: 'references', label: 'References',    inverse_label: 'Referenced by', description: 'The first item points to the second for detail.' },
+  { id: 'related',    label: 'Related to',    inverse_label: 'Related to',    description: 'The two items cover the same subject.' },
+];
+
+// The relationship types a catalog uses, with label and inverse_label filled in.
+function relationshipTypes(catalog) {
+  const list = catalog && Array.isArray(catalog.relationship_types) ? catalog.relationship_types : DEFAULT_RELATIONSHIP_TYPES;
+  return list.filter(t => t && t.id).map(t => {
+    const label = t.label || t.id;
+    return Object.assign({}, t, { label, inverse_label: t.inverse_label || label });
+  });
+}
+
+// Kinds of item that can carry attributes[], as Item Kind value -> sheet.
+const ATTRIBUTE_PARENTS = { regulation: 'Regulations', obligation: 'Obligations', document: 'Documents' };
+
+// Fields whose name starts with "x-" belong to the author: never validated, never rendered unless
+// a panel asks for them, and carried through YAML, workbook (scalar values), and HTML unchanged.
+const isExtension = key => typeof key === 'string' && key.startsWith('x-');
+
+// Kinds of item a relationship can point at, as prefix -> key in the data object.
+// A relationship endpoint is a bare ID when it is unique across these, or "<prefix>:<id>".
+const ITEM_KINDS = {
+  regulation: 'regulations',
+  obligation: 'obligations',
+  document:   'documents',
+  topic:      'topics',
+  control:    'controls',
+};
+
+// Legacy relationship fields. They keep working; a later release moves them to relationships.yaml.
+const LEGACY_NOTE = 'Legacy field: still supported; a later release moves this to the Relationships sheet.';
+
 // doc_type is free-text. Only the value 'reference' has special behavior (layer may be omitted).
 // No closed enum — do not add a 'values' property to the doc_type column definition.
 
@@ -31,7 +70,8 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 // key:      field name in the YAML entity
 // header:   column label in the workbook
 // required: true = empty string on this field is a validation error
-// type:     'string' | 'enum' | 'date' | 'integer' | 'boolean' | 'pipe_list'
+// type:     'string' | 'enum' | 'date' | 'integer' | 'boolean' | 'pipe_list' | 'kv_map'
+//           kv_map: a YAML map of key: value, written in one cell as "a: 1 | b: 2"
 // values:   closed list of allowed values (enum only)
 // note:     hint surfaced on the Instructions sheet
 
@@ -52,7 +92,7 @@ const COLUMNS = {
     { key: 'applies_when',      header: 'Applies When',      required: false, type: 'pipe_list', note: 'Pipe-separated checklist items for "Does this apply to my work?"' },
     { key: 'does_not_apply',    header: 'Does Not Apply',    required: false, type: 'pipe_list', note: 'Pipe-separated exclusion statements' },
     { key: 'context_note',      header: 'Context Note',      required: false, type: 'string',    note: 'Shown instead of coverage stats when obligation_type is context' },
-    { key: 'reg_document',      header: 'Reg Document',      required: false, type: 'string',    note: 'Document ID from Documents sheet' },
+    { key: 'reg_document',      header: 'Reg Document',      required: false, type: 'string',    note: 'Document ID from Documents sheet. ' + LEGACY_NOTE },
     { key: 'source_url',        header: 'Source URL',        required: false, type: 'string' },
     { key: 'version_tracked',   header: 'Version Tracked',   required: false, type: 'string' },
     { key: 'version_note',      header: 'Version Note',      required: false, type: 'string',    note: 'Triggers amber callout warning that assessed version may differ from current' },
@@ -60,6 +100,10 @@ const COLUMNS = {
     { key: 'total_obligations', header: 'Total Obligations', required: false, type: 'integer' },
     { key: 'date_display',      header: 'Date Display',      required: false, type: 'string',    note: 'Fallback text when no future key date exists' },
     { key: 'last_reviewed',     header: 'Last Reviewed',     required: false, type: 'date' },
+    { key: 'sequence',          header: 'Sequence',          required: false, type: 'integer',   note: 'Sort position in lists; lower first. Rows without one keep file order after those with one.' },
+    { key: 'parent',            header: 'Parent',            required: false, type: 'string',    note: 'ID of a parent regulation on this sheet' },
+    { key: 'created_at',        header: 'Created At',        required: false, type: 'date',      note: 'When this record was added. Not set automatically.' },
+    { key: 'modified_at',       header: 'Modified At',       required: false, type: 'date',      note: 'When this record last changed. Not set automatically.' },
   ],
 
   Reg_Key_Dates: [
@@ -87,6 +131,9 @@ const COLUMNS = {
     { key: 'version',          header: 'Version',          required: false, type: 'string',    note: '"Assessed against [version]"; overridden by mapped_against_version on the mapping' },
     { key: 'plain_title',      header: 'Plain Title',      required: false, type: 'string',    note: 'Card heading on topic pages; falls back to title' },
     { key: 'plain_summary',    header: 'Plain Summary',    required: false, type: 'string',    note: '"In plain terms:" in detail panel; included in search' },
+    { key: 'sequence',         header: 'Sequence',         required: false, type: 'integer',   note: 'Sort position in lists; lower first. Rows without one keep file order after those with one.' },
+    { key: 'created_at',       header: 'Created At',       required: false, type: 'date',      note: 'When this record was added. Not set automatically.' },
+    { key: 'modified_at',      header: 'Modified At',      required: false, type: 'date',      note: 'When this record last changed. Not set automatically.' },
   ],
 
   Mappings: [
@@ -99,6 +146,7 @@ const COLUMNS = {
     { key: 'last_reviewed',          header: 'Last Reviewed',          required: false, type: 'date' },
   ],
 
+  // Legacy: mapping.documents. Still supported; a later release moves it to Relationships.
   Mapping_Docs: [
     { key: 'obligation_id', header: 'Obligation ID',  required: true,  type: 'string', note: 'Must match an Obligation ID in Mappings' },
     { key: 'document_id',   header: 'Document ID',    required: true,  type: 'string', note: 'Must match an ID in Documents' },
@@ -117,6 +165,11 @@ const COLUMNS = {
     { key: 'last_reviewed',        header: 'Last Reviewed',        required: false, type: 'date' },
     { key: 'review_interval_days', header: 'Review Interval Days', required: false, type: 'integer', note: 'Per-document override of catalog default' },
     { key: 'restricted',           header: 'Restricted',           required: false, type: 'boolean', note: 'Shows "Restricted access" tag; does not enforce access control' },
+    { key: 'sequence',             header: 'Sequence',             required: false, type: 'integer', note: 'Sort position in lists; lower first. Rows without one keep file order after those with one.' },
+    { key: 'parent',               header: 'Parent',               required: false, type: 'string',  note: 'ID of a parent document on this sheet' },
+    { key: 'valid_until',          header: 'Valid Until',          required: false, type: 'date',    note: 'After this date the document shows as Expired' },
+    { key: 'created_at',           header: 'Created At',           required: false, type: 'date',    note: 'When this record was added. Not set automatically.' },
+    { key: 'modified_at',          header: 'Modified At',          required: false, type: 'date',    note: 'When this record last changed. Not set automatically.' },
   ],
 
   Topics: [
@@ -125,7 +178,8 @@ const COLUMNS = {
     { key: 'blurb',         header: 'Blurb',          required: false, type: 'string',    note: 'Subtitle on topic tile cards' },
     { key: 'summary',       header: 'Summary',        required: false, type: 'string',    note: 'Lede on topic detail page; glossary terms hyperlinked' },
     { key: 'applies_to_you',header: 'Applies To You', required: false, type: 'pipe_list', note: 'Pipe-separated checklist items for "This applies to you if…"' },
-    { key: 'related',       header: 'Related',        required: false, type: 'pipe_list', note: 'Pipe-separated topic IDs; validated but not currently rendered' },
+    { key: 'related',       header: 'Related',        required: false, type: 'pipe_list', note: 'Pipe-separated topic IDs, shown as "Related topics" on the topic page. ' + LEGACY_NOTE },
+    { key: 'parent',        header: 'Parent',         required: false, type: 'string',    note: 'ID of a parent topic on this sheet' },
   ],
 
   Controls: [
@@ -146,6 +200,28 @@ const COLUMNS = {
     { key: 'aliases',    header: 'Aliases',    required: false, type: 'pipe_list', note: 'Alternate forms that also trigger the tooltip' },
   ],
 
+  // Folded into the parent's attributes[] list; Item Kind + Item ID name the parent.
+  Attributes: [
+    { key: 'item_kind', header: 'Item Kind', required: true,  type: 'enum',   values: Object.keys(ATTRIBUTE_PARENTS), note: 'Which sheet the item is on' },
+    { key: 'item_id',   header: 'Item ID',   required: true,  type: 'string', note: 'ID of the item on that sheet' },
+    { key: 'name',      header: 'Name',      required: true,  type: 'string', note: 'Each name once per item' },
+    { key: 'value',     header: 'Value',     required: true,  type: 'string', note: 'Stored as text, even when it is a number' },
+    { key: 'unit',      header: 'Unit',      required: false, type: 'string', note: 'e.g. days, months, %' },
+    { key: 'source',    header: 'Source',    required: false, type: 'string', note: 'Where the value comes from' },
+  ],
+
+  // The Type dropdown lists catalog.yaml relationship_types (or the defaults); generate-template.js
+  // fills it in, and validate() checks it, so it is a plain string here.
+  Relationships: [
+    { key: 'from_item',   header: 'From Item',   required: true,  type: 'string', note: 'ID of a regulation, obligation, document, topic, or control. If the same ID is used by two kinds of item, prefix it: topic:logging' },
+    { key: 'to_item',     header: 'To Item',     required: true,  type: 'string', note: 'Same format as From Item' },
+    { key: 'type',        header: 'Type',        required: true,  type: 'string', note: 'A relationship type ID from catalog.yaml. Read as "From Item <type> To Item"; the other item shows the reverse.' },
+    { key: 'description', header: 'Description', required: false, type: 'string' },
+    { key: 'attributes',  header: 'Attributes',  required: false, type: 'kv_map' },
+    { key: 'created_at',  header: 'Created At',  required: false, type: 'date',   note: 'When this relationship was added. Not set automatically.' },
+    { key: 'modified_at', header: 'Modified At', required: false, type: 'date',   note: 'When this relationship last changed. Not set automatically.' },
+  ],
+
 };
 
 const SHEET_ORDER = [
@@ -157,17 +233,36 @@ const SHEET_ORDER = [
   'Topics', 'Controls',
   'Roles',
   'Glossary',
+  'Attributes',
+  'Relationships',
 ];
 
-// Template version. Major digit mismatch = importer refuses. Minor digit mismatch = warn.
-const TEMPLATE_VERSION = '1.0';
+// Template version: the workbook layout. Read from Instructions!C2.
+// Major digit mismatch = importer refuses. Minor digit mismatch = warn.
+// 1.1: Attributes and Relationships sheets; data schema version in C3; new columns.
+const TEMPLATE_VERSION = '1.1';
+
+// Data schema version: the YAML format. Written as schema_version in every YAML file and in
+// Instructions!C3. Same rules: major mismatch refused, minor mismatch warned, missing = 1.0.
+const SCHEMA_VERSION = '1.0';
+
+// Sheets added after 1.0, with the minor version that added them. An older workbook without
+// one of these imports with a warning (the sheet is treated as empty) instead of being refused.
+const SHEETS_ADDED_IN = { Attributes: 1, Relationships: 1 };
 
 module.exports = {
   SOURCE_TYPES,
   OBLIGATION_TYPES,
   STATUSES,
+  DEFAULT_RELATIONSHIP_TYPES,
+  relationshipTypes,
+  ATTRIBUTE_PARENTS,
+  isExtension,
+  ITEM_KINDS,
   ISO_DATE,
   COLUMNS,
   SHEET_ORDER,
   TEMPLATE_VERSION,
+  SCHEMA_VERSION,
+  SHEETS_ADDED_IN,
 };

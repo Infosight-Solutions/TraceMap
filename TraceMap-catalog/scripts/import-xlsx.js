@@ -11,8 +11,11 @@
  *
  * Pipeline: open workbook -> check template version (Instructions!C2) -> read entity sheets
  * (headers matched by name, example row skipped only if A2 carries the example note) ->
- * coerce cell types -> fold Reg_Key_Dates / Mapping_Docs into their parents -> run the same
- * validate() build.js uses -> write YAML on success, or import-report.md on failure.
+ * coerce cell types -> fold Reg_Key_Dates / Mapping_Docs / Attributes into their parents -> run
+ * the same validate() build.js uses -> write YAML on success, or import-report.md on failure.
+ *
+ * Instructions!C3 holds the data schema version (missing = 1.0, from a 1.0 template); every YAML
+ * file written starts with schema_version. Columns whose header starts with x- are kept as-is.
  *
  * Exit codes: 0 success (warnings allowed), 1 validation errors, 2 file-level failure.
  */
@@ -21,7 +24,10 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const ExcelJS = require('exceljs');
-const { COLUMNS, SHEET_ORDER, TEMPLATE_VERSION } = require('../lib/schema');
+const {
+  COLUMNS, SHEET_ORDER, TEMPLATE_VERSION, SCHEMA_VERSION, SHEETS_ADDED_IN, ATTRIBUTE_PARENTS, isExtension,
+} = require('../lib/schema');
+const { parseVersion, checkDataVersions } = require('../lib/versions');
 const { validate } = require('../lib/validate');
 const { REPORT_NAME, mdCell, mdCode, stamp, renderReport: renderMarkdown } = require('../lib/report');
 
@@ -40,6 +46,7 @@ const ENTITIES = {
   Controls:    'controls',
   Roles:       'roles',
   Glossary:    'glossary',
+  Relationships: 'relationships',
 };
 
 // Child sheets folded into a parent list; the foreign key is dropped from the nested object.
@@ -47,7 +54,7 @@ const CHILDREN = {
   Reg_Key_Dates: { parentSheet: 'Regulations', fk: 'regulation_id', parentKey: 'id',            listKey: 'key_dates' },
   Mapping_Docs:  { parentSheet: 'Mappings',    fk: 'obligation_id', parentKey: 'obligation_id', listKey: 'documents' },
 };
-const CHILD_SHEET_FOR = { key_dates: 'Reg_Key_Dates', documents: 'Mapping_Docs' };
+const CHILD_SHEET_FOR = { key_dates: 'Reg_Key_Dates', documents: 'Mapping_Docs', attributes: 'Attributes' };
 
 // pipe_list fields that hold a single keyword as a plain scalar rather than a list.
 const SCALAR_KEYWORDS = { applies_if: ['always'] };
@@ -82,12 +89,6 @@ function fatal(msg) {
 
 // ---------- version ----------
 
-function parseVersion(v) {
-  if (v == null) return null;
-  const m = /^\s*(\d+)(?:\.(\d+))?\s*$/.exec(String(v));
-  return m ? { major: Number(m[1]), minor: Number(m[2] || 0), text: String(v).trim() } : null;
-}
-
 function checkVersion(wb) {
   const ws = wb.getWorksheet('Instructions');
   const expected = parseVersion(TEMPLATE_VERSION);
@@ -103,6 +104,14 @@ function checkVersion(wb) {
       'workbook that were never imported. For a blank workbook, run "npm run generate-template".');
   }
   return { found, expected, olderMinor: found.minor < expected.minor, newerMinor: found.minor > expected.minor };
+}
+
+// Data schema version in Instructions!C3. A template from before C3 existed holds 1.0 data.
+function checkSchemaVersion(wb, report) {
+  const raw = cellValue(wb.getWorksheet('Instructions').getCell('C3'));
+  const { errors, warnings } = checkDataVersions([['workbook (Instructions C3)', isEmpty(raw) ? '1.0' : raw]]);
+  if (errors.length) fatal(errors.join('\n'));
+  for (const note of warnings) report.warn({ sheet: 'Instructions', row: 3, column: 'C', note });
 }
 
 // ---------- catalog ----------
@@ -169,6 +178,21 @@ function coerce(col, v) {
       if (typeof v === 'boolean') return { value: v };
       if (typeof v === 'string' && /^(true|false)$/i.test(v.trim())) return { value: v.trim().toUpperCase() === 'TRUE' };
       return { error: 'TRUE or FALSE' };
+    case 'kv_map': {
+      const out = {};
+      for (const part of String(v).split('|').map(x => x.trim()).filter(Boolean)) {
+        const i = part.indexOf(':');
+        const key = i > 0 ? part.slice(0, i).trim() : '';
+        if (!key) return { error: 'key: value pairs separated by |, e.g. strength: strong | reviewed_by: ciso' };
+        if (key in out) return { error: `each key once ("${key}" repeats)` };
+        out[key] = part.slice(i + 1).trim();
+      }
+      return { value: Object.keys(out).length ? out : undefined };
+    }
+    case 'raw': // x- extension columns: keep the cell's own type
+      if (v instanceof Date) return { value: isoDate(v) };
+      if (typeof v === 'string') return { value: v.trim() || undefined };
+      return { value: v };
     case 'pipe_list': {
       const parts = String(v).split('|').map(s => s.trim()).filter(Boolean);
       if (!parts.length) return { value: undefined };
@@ -198,11 +222,20 @@ function readSheet(ws, sheet, cols, report, versionInfo) {
   }
   const colIndex = new Map(); // key -> column number
   const headerRow = ws.getRow(1);
+  const extCols = []; // x- columns, kept as they are
   for (let i = 1; i <= ws.columnCount; i++) {
     const text = cellValue(headerRow.getCell(i));
     if (isEmpty(text)) continue;
     const col = byHeader.get(headerKey(text));
-    if (!col) {
+    const name = String(text).trim();
+    if (!col && isExtension(name)) {
+      if (colIndex.has(name)) {
+        report.error({ sheet, row: 1, column: name, value: '', expected: `one "${name}" column (it appears twice)` });
+      } else {
+        extCols.push({ key: name, header: name, required: false, type: 'raw' });
+        colIndex.set(name, i);
+      }
+    } else if (!col) {
       report.warn({ sheet, row: 1, column: String(text), note: 'Unrecognized column; its values are ignored' });
     } else if (colIndex.has(col.key)) {
       report.error({ sheet, row: 1, column: String(text), value: '', expected: `one "${col.header}" column (it appears twice)` });
@@ -234,7 +267,7 @@ function readSheet(ws, sheet, cols, report, versionInfo) {
     if ([...raw.values()].every(isEmpty)) continue;
 
     const record = {};
-    for (const col of cols) {
+    for (const col of cols.concat(extCols)) {
       if (!raw.has(col.key)) continue;
       const v = raw.get(col.key);
       if (isEmpty(v)) continue;
@@ -332,6 +365,7 @@ async function main() {
   const versionInfo = checkVersion(wb);
   const catalog = loadCatalog(catalogPath);
   const report = makeReport();
+  checkSchemaVersion(wb, report);
 
   if (versionInfo.olderMinor) {
     console.warn(`import: warning: template version ${versionInfo.found.text} is older than ${TEMPLATE_VERSION}; ` +
@@ -346,8 +380,14 @@ async function main() {
   const sheetRows = {};
   for (const sheet of entitySheets) {
     const ws = wb.getWorksheet(sheet);
-    if (!ws) fatal(`workbook has no "${sheet}" sheet. Run "npm run generate-template" for a complete template.`);
     sheetCols[sheet] = columnsFor(sheet, catalog);
+    if (!ws && versionInfo.found.minor < (SHEETS_ADDED_IN[sheet] ?? 0)) {
+      // An older template that predates this sheet: treat it as empty.
+      report.warn({ sheet, row: '—', column: '', note: `Sheet not in this older template (${versionInfo.found.text}); imported as empty` });
+      sheetRows[sheet] = [];
+      continue;
+    }
+    if (!ws) fatal(`workbook has no "${sheet}" sheet. Run "npm run generate-template" for a complete template.`);
     sheetRows[sheet] = readSheet(ws, sheet, sheetCols[sheet], report, versionInfo).rows;
   }
 
@@ -363,7 +403,7 @@ async function main() {
   }
 
   // Fold child sheets into their parents, in sheet row order.
-  const childRowOf = {}; // listKey -> Map(parentIndex -> [sheet row per child index])
+  const childRowOf = {}; // listKey -> Map('<entity>:<parentIndex>' -> [sheet row per child index])
   for (const [sheet, spec] of Object.entries(CHILDREN)) {
     const parentEntity = ENTITIES[spec.parentSheet];
     const parents = data[parentEntity];
@@ -381,14 +421,50 @@ async function main() {
       }
       const { [spec.fk]: _drop, ...child } = record;
       (parents[pi][spec.listKey] = parents[pi][spec.listKey] || []).push(child);
-      if (!rowsByParent.has(pi)) rowsByParent.set(pi, []);
-      rowsByParent.get(pi).push(row);
+      const key = parentEntity + ':' + pi;
+      if (!rowsByParent.has(key)) rowsByParent.set(key, []);
+      rowsByParent.get(key).push(row);
     }
     // Child rows with no parent key at all.
     for (const { row, record } of sheetRows[sheet]) {
       if (record[spec.fk] == null) report.error({ sheet, row, column: fkHeader, value: '', expected: 'a value (required)' });
     }
     childRowOf[spec.listKey] = rowsByParent;
+  }
+
+  // Attributes: Item Kind picks the parent sheet, Item ID the row on it.
+  {
+    const header = key => sheetCols.Attributes.find(c => c.key === key).header;
+    const byKind = {};
+    for (const [kind, parentSheet] of Object.entries(ATTRIBUTE_PARENTS)) {
+      const ids = new Map();
+      data[ENTITIES[parentSheet]].forEach((p, i) => { if (p.id != null && !ids.has(p.id)) ids.set(p.id, i); });
+      byKind[kind] = { entity: ENTITIES[parentSheet], parentSheet, ids };
+    }
+    const rows = new Map();
+    for (const { row, record } of sheetRows.Attributes) {
+      const { item_kind: kind, item_id: id, ...attr } = record;
+      if (kind == null || id == null) {
+        report.error({ sheet: 'Attributes', row, column: header(kind == null ? 'item_kind' : 'item_id'), value: '', expected: 'a value (required)' });
+        continue;
+      }
+      const target = byKind[kind];
+      if (!target) {
+        report.error({ sheet: 'Attributes', row, column: header('item_kind'), value: kind, expected: Object.keys(ATTRIBUTE_PARENTS).join(' | ') });
+        continue;
+      }
+      const pi = target.ids.get(id);
+      if (pi === undefined) {
+        report.error({ sheet: 'Attributes', row, column: header('item_id'), value: id, expected: `an existing ID on the ${target.parentSheet} sheet` });
+        continue;
+      }
+      const parent = data[target.entity][pi];
+      (parent.attributes = parent.attributes || []).push(attr);
+      const key = target.entity + ':' + pi;
+      if (!rows.has(key)) rows.set(key, []);
+      rows.get(key).push(row);
+    }
+    childRowOf.attributes = rows;
   }
 
   // Shared validation, then translate each issue back to sheet / row / column.
@@ -399,10 +475,10 @@ async function main() {
     let row = rowOf[issue.entity][issue.index];
     if (issue.child) {
       sheet = CHILD_SHEET_FOR[issue.child];
-      const rows = childRowOf[issue.child].get(issue.index) || [];
+      const rows = childRowOf[issue.child].get(issue.entity + ':' + issue.index) || [];
       row = rows[issue.childIndex];
     }
-    const col = issue.field && sheetCols[sheet].find(c => c.key === issue.field);
+    const col = issue.field && sheetCols[sheet] && sheetCols[sheet].find(c => c.key === issue.field);
     return { sheet, row: row == null ? '' : row, column: col ? col.header : (issue.field || '') };
   };
   for (const e of result.errors) {
@@ -425,7 +501,7 @@ async function main() {
   const written = [];
   for (const [sheet, entity] of Object.entries(ENTITIES)) {
     const file = path.join(outDir, `${entity}.yaml`);
-    fs.writeFileSync(file, yaml.dump({ [entity]: data[entity] }, DUMP_OPTIONS));
+    fs.writeFileSync(file, yaml.dump({ schema_version: SCHEMA_VERSION, [entity]: data[entity] }, DUMP_OPTIONS));
     written.push([file, data[entity].length, sheet]);
   }
   // A report left over from an earlier failed import no longer describes this data.
@@ -436,7 +512,8 @@ async function main() {
   for (const [file, n] of written) console.log(`  ${path.basename(file).padEnd(18)} ${String(n).padStart(4)} records`);
   const kd = data.regulations.reduce((n, r) => n + (r.key_dates || []).length, 0);
   const md = data.mappings.reduce((n, m) => n + (m.documents || []).length, 0);
-  console.log(`  (${kd} key dates folded into regulations, ${md} mapping documents folded into mappings)`);
+  const at = ['regulations', 'obligations', 'documents'].reduce((n, e) => n + data[e].reduce((m, x) => m + (x.attributes || []).length, 0), 0);
+  console.log(`  (${kd} key dates folded into regulations, ${md} mapping documents folded into mappings, ${at} attributes folded into their items)`);
   if (report.warnings.length) {
     console.log(`  ${report.warnings.length} warning(s):`);
     for (const w of [...report.warnings].sort(byLocation)) console.log(`    ${w.sheet} row ${w.row}${w.column ? ', ' + w.column : ''}: ${w.note}`);

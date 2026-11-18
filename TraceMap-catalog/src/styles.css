@@ -155,6 +155,7 @@ main { max-width: 1320px; margin: 0 auto; padding: 40px 40px 72px; display: flex
 .tag-soon { background: var(--soon); color: #fff; }
 .tag-quiet { background: #ECEDE8; color: var(--ink-2); }
 .tag-restricted { background: #F1E4E4; color: var(--red); }
+.tag-expired { background: #fff; color: var(--red); border: 1px solid var(--red); padding: 2px 9px; }
 
 /* ---------- status ---------- */
 .pill {
@@ -176,6 +177,7 @@ main { max-width: 1320px; margin: 0 auto; padding: 40px 40px 72px; display: flex
 .bar .b-deviations_noted { background: #D98B2B; }
 .bar .b-verification_pending { background: var(--red); }
 .legend { display: flex; gap: 24px; flex-wrap: wrap; font-size: 14px; color: var(--ink-2); }
+.legend a { font-size: 14px; }
 .legend span.swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; margin-right: 8px; vertical-align: -2px; }
 
 .stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
@@ -277,7 +279,40 @@ td .sub { display: block; font-size: 13px; color: var(--muted); font-weight: 400
 abbr.term { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
 .empty { padding: 28px; text-align: center; color: var(--muted); }
 .glossary dt { font-weight: 600; margin-top: 16px; }
+.glossary dt:first-child { margin-top: 0; }
 .glossary dd { margin: 4px 0 0; color: var(--ink-2); max-width: 80ch; }
+
+/* ---------- regulation page panels ---------- */
+/* A panel that is several blocks keeps the page's own spacing between them. */
+.panel-group { display: flex; flex-direction: column; gap: inherit; }
+
+/* Category boxes: one per facet; values that apply are tinted, checked, and listed first. */
+.cat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.cat-box {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;
+}
+.cat-label { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.cat-values { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 14px; line-height: 1.35; color: var(--muted); }
+.cat-values li { display: flex; gap: 6px; align-items: flex-start; padding: 3px 8px 3px 33px; border-left: 3px solid transparent; border-radius: 0 6px 6px 0; }
+.cat-values li.cat-on { padding-left: 11px; background: var(--navy-tint); border-left-color: var(--navy); color: var(--ink); font-weight: 600; }
+.cat-values li.cat-on svg { flex: none; margin-top: 1px; stroke: var(--navy); }
+.cat-more { font-size: 14px; align-self: flex-start; }
+
+.attrs { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 0; font-size: 15px; }
+.attr { display: flex; gap: 6px; }
+.attr dt { color: var(--muted); }
+.attr dt::after { content: ":"; }
+.attr dd { margin: 0; font-weight: 600; }
+
+.rel-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.rel-list li { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.rel-kind { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; min-width: 7.5em; }
+
+/* Legend page */
+.legend-rows { display: flex; flex-direction: column; gap: 14px; }
+.legend-row { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: center; }
+.legend-key { display: flex; }
 
 @media (max-width: 1100px) {
   .tiles, .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -286,6 +321,7 @@ abbr.term { text-decoration: underline dotted; text-underline-offset: 3px; curso
   .trace { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 700px) {
+  .legend-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
   .topbar-inner, .notice-inner, main, .footer-inner { padding-left: 18px; padding-right: 18px; }
   .tiles, .grid-3, .grid-4, .applies, .trace { grid-template-columns: minmax(0, 1fr); }
   .facet { grid-template-columns: minmax(0, 1fr); gap: 8px; }

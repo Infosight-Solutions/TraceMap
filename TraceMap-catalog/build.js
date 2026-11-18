@@ -17,6 +17,9 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const { validate, formatIssue } = require('./lib/validate');
+const { checkDataVersions } = require('./lib/versions');
+const { relationshipTypes } = require('./lib/schema');
+const { resolveLayouts } = require('./lib/layouts');
 
 const TOOL_VERSION = '0.2.0';
 
@@ -62,6 +65,9 @@ function normalizeDates(node) {
   return node;
 }
 
+// schema_version of every file that was read, for checkDataVersions().
+const versions = [];
+
 function loadYaml(dir, file, key, required) {
   const p = path.join(dir, file);
   if (!fs.existsSync(p)) {
@@ -75,6 +81,7 @@ function loadYaml(dir, file, key, required) {
     throw new Error('YAML syntax error in ' + p + ':\n  ' + e.message);
   }
   doc = normalizeDates(doc);
+  versions.push([file, doc.schema_version]);
   if (!key) return doc;
   const list = doc[key];
   if (list == null) return [];
@@ -96,8 +103,19 @@ function main() {
     controls: loadYaml(dir, 'controls.yaml', 'controls', false),
     obligations: loadYaml(dir, 'obligations.yaml', 'obligations', true),
     mappings: loadYaml(dir, 'mappings.yaml', 'mappings', true),
-    glossary: loadYaml(dir, 'glossary.yaml', 'glossary', false)
+    glossary: loadYaml(dir, 'glossary.yaml', 'glossary', false),
+    relationships: loadYaml(dir, 'relationships.yaml', 'relationships', false)
   };
+
+  // A different major schema version means the files may not mean what this build expects,
+  // so stop before validating them.
+  const sv = checkDataVersions(versions);
+  sv.warnings.forEach(w => console.warn('warning  ' + w));
+  if (sv.errors.length) {
+    sv.errors.forEach(e => console.error('error    ' + e));
+    console.error('\nBuild failed: schema version. Nothing was written.');
+    process.exit(1);
+  }
 
   const { errors, warnings } = validate(data);
   warnings.forEach(w => console.warn('warning  ' + formatIssue(w)));
@@ -106,6 +124,12 @@ function main() {
     console.error('\nBuild failed: ' + errors.length + ' error(s). Nothing was written.');
     process.exit(1);
   }
+
+  // The page gets complete settings: defaults filled in for layouts and relationship types.
+  data.catalog = Object.assign({}, data.catalog, {
+    layouts: resolveLayouts(data.catalog),
+    relationship_types: relationshipTypes(data.catalog),
+  });
 
   data.build_metadata = {
     tool_version: TOOL_VERSION,

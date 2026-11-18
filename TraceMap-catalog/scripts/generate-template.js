@@ -18,14 +18,22 @@
  * generation time, because each organization defines its own:
  *   - facets[]  -> one extra column per facet on the Regulations sheet, with a dropdown
  *   - layers[]  -> dropdown values for the layer columns on Documents and Mapping_Docs
+ *   - relationship_types[] (or the defaults) -> the Type dropdown on Relationships
+ *
+ * With --populate, any field named x-... with a single value gets its own column, so author
+ * extensions survive the round trip. Lists or maps under x- fields cannot fit in a cell; they are
+ * reported and left out.
  */
 
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const ExcelJS = require('exceljs');
-const { COLUMNS, SHEET_ORDER, TEMPLATE_VERSION } = require('../lib/schema');
+const {
+  COLUMNS, SHEET_ORDER, TEMPLATE_VERSION, SCHEMA_VERSION, ATTRIBUTE_PARENTS, relationshipTypes, isExtension,
+} = require('../lib/schema');
 const { validate, formatIssue } = require('../lib/validate');
+const { checkDataVersions } = require('../lib/versions');
 const { REPORT_NAME, mdCell, mdCode, stamp, renderReport } = require('../lib/report');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -79,6 +87,10 @@ const EXAMPLES = {
     total_obligations: 33,
     date_display: '',
     last_reviewed: '2026-07-10',
+    sequence: 10,
+    parent: '',
+    created_at: '2025-11-03',
+    modified_at: '2026-07-10',
   },
   Reg_Key_Dates: {
     regulation_id: 'soc2',
@@ -104,6 +116,9 @@ const EXAMPLES = {
     version: '2017 TSC',
     plain_title: 'Lock down who can log in',
     plain_summary: 'Systems check who you are before letting you in.',
+    sequence: '',
+    created_at: '',
+    modified_at: '',
   },
   Mappings: {
     obligation_id: 'soc2-cc6-1',
@@ -131,6 +146,11 @@ const EXAMPLES = {
     last_reviewed: '2026-01-20',
     review_interval_days: 365,
     restricted: false,
+    sequence: '',
+    parent: 'POL-001',
+    valid_until: '2027-01-20',
+    created_at: '',
+    modified_at: '',
   },
   Topics: {
     id: 'access',
@@ -139,6 +159,7 @@ const EXAMPLES = {
     summary: 'Only the right people should see or change company data.',
     applies_to_you: 'Adding a new hire to a system | Giving someone admin rights',
     related: 'identity | logging',
+    parent: '',
   },
   Controls: {
     id: 'authentication',
@@ -155,6 +176,23 @@ const EXAMPLES = {
     definition: 'An organization that handles personal data on behalf of a controller.',
     aliases: 'processors',
   },
+  Attributes: {
+    item_kind: 'regulation',
+    item_id: 'soc2',
+    name: 'Audit period',
+    value: '12',
+    unit: 'months',
+    source: 'AICPA',
+  },
+  Relationships: {
+    from_item: 'POL-002',
+    to_item: 'topic:access',
+    type: '', // filled from catalog relationship types
+    description: 'The policy sets the rules this topic summarizes',
+    attributes: { strength: 'strong' },
+    created_at: '2026-07-10',
+    modified_at: '',
+  },
 };
 
 const SHEET_DESCRIPTIONS = {
@@ -162,12 +200,14 @@ const SHEET_DESCRIPTIONS = {
   Reg_Key_Dates: 'Key dates for regulations (effective dates, deadlines, internal milestones). Many rows per regulation.',
   Obligations: 'Individual requirements. Each belongs to one regulation.',
   Mappings: 'One row per obligation: its documentation status and rationale.',
-  Mapping_Docs: 'Which documents address each mapped obligation. One row per obligation–document pair.',
+  Mapping_Docs: 'Which documents address each mapped obligation. One row per obligation–document pair. (Legacy layout: still supported; a later release moves it to Relationships.)',
   Documents: 'Policies, standards, procedures, evidence, and reference summaries the catalog links to.',
   Topics: 'Plain-language topics shown as tiles on the home page.',
   Controls: 'Shared controls that satisfy requirements across several regulations. Each belongs to one topic.',
   Roles: 'Accountable roles. Use role titles, not people’s names.',
   Glossary: 'Plain definitions. Terms and aliases get a hover definition wherever they appear in summaries.',
+  Attributes: 'Extra facts about a regulation, obligation, or document: a name, a value, and optionally a unit and source. One row per fact.',
+  Relationships: 'Links between any two items (regulations, obligations, documents, topics, controls). One row per link. Optional.',
 };
 
 // ---------- CLI ----------
@@ -235,13 +275,19 @@ function loadCatalog(file) {
     label: f.label || f.field,
     values: Object.keys(f.values || {}),
   }));
-  return { layers, facets, catalog };
+  const relTypes = relationshipTypes(catalog).map(t => t.id);
+  return { layers, facets, relTypes, catalog };
 }
 
 // Returns the full column list for a sheet: static COLUMNS plus catalog-driven additions.
 // Catalog-driven dropdowns are expressed as enum columns so the rest of the code treats them alike.
-function columnsFor(sheet, { layers, facets }) {
+function columnsFor(sheet, { layers, facets, relTypes }) {
   let cols = COLUMNS[sheet].map(c => ({ ...c }));
+  if (sheet === 'Relationships') {
+    cols = cols.map(c => (c.key === 'type'
+      ? { ...c, type: 'enum', values: relTypes, note: [c.note, 'Types come from catalog.yaml relationship_types (or the defaults).'].join(' ') }
+      : c));
+  }
   if (LAYER_SHEETS.includes(sheet)) {
     cols = cols.map(c => (c.key === 'layer'
       ? { ...c, type: 'enum', values: layers, note: [c.note, 'Layer IDs come from catalog.yaml layers.'].filter(Boolean).join(' ') }
@@ -263,8 +309,9 @@ function columnsFor(sheet, { layers, facets }) {
   return cols;
 }
 
-function exampleFor(sheet, cols, { layers }) {
+function exampleFor(sheet, cols, { layers, relTypes }) {
   const ex = { ...EXAMPLES[sheet] };
+  if (sheet === 'Relationships') ex.type = relTypes.includes('references') ? 'references' : relTypes[0];
   for (const c of cols) {
     if (c.facet) ex[c.key] = c.values[0] || '';
     if (c.key === 'layer' && LAYER_SHEETS.includes(sheet)) {
@@ -287,10 +334,19 @@ const SOURCES = {
   Controls:    ['controls.yaml',    'controls'],
   Roles:       ['roles.yaml',       'roles'],
   Glossary:    ['glossary.yaml',    'glossary'],
+  Relationships: ['relationships.yaml', 'relationships'],
 };
 
+// Files added after most catalogs were written; a missing one is normal, so no warning.
+const QUIET_IF_MISSING = new Set(['relationships.yaml']);
+
 // Nested lists that become their own sheets; not reported as unmapped fields.
-const NESTED = { Regulations: 'key_dates', Mappings: 'documents' };
+const NESTED = {
+  Regulations: ['key_dates', 'attributes'],
+  Mappings: ['documents'],
+  Obligations: ['attributes'],
+  Documents: ['attributes'],
+};
 
 // js-yaml turns YYYY-MM-DD into Date objects; turn them back into ISO strings (same as build.js).
 function normalizeDates(node) {
@@ -304,10 +360,10 @@ function normalizeDates(node) {
   return node;
 }
 
-function loadList(dir, file, key) {
+function loadList(dir, file, key, versions) {
   const p = path.join(dir, file);
   if (!fs.existsSync(p)) {
-    console.warn(`  warning: ${p} not found; its sheet will be empty`);
+    if (!QUIET_IF_MISSING.has(file)) console.warn(`  warning: ${p} not found; its sheet will be empty`);
     return [];
   }
   let doc;
@@ -316,6 +372,7 @@ function loadList(dir, file, key) {
   } catch (e) {
     fail(`YAML syntax error in ${p}:\n  ${e.message}`);
   }
+  if (versions) versions.push([file, doc.schema_version]);
   const list = normalizeDates(doc)[key];
   if (list == null) return [];
   if (!Array.isArray(list)) fail(`${p}: top-level key "${key}" must be a list`);
@@ -323,10 +380,11 @@ function loadList(dir, file, key) {
 }
 
 // Returns { sheetName: [record, ...] } for every entity sheet, in source YAML order.
-function loadRecords(dir) {
+// versions collects [file, schema_version] for each file read.
+function loadRecords(dir, versions) {
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) fail(`--populate directory not found: ${dir}`);
   const records = {};
-  for (const [sheet, [file, key]] of Object.entries(SOURCES)) records[sheet] = loadList(dir, file, key);
+  for (const [sheet, [file, key]] of Object.entries(SOURCES)) records[sheet] = loadList(dir, file, key, versions);
 
   records.Reg_Key_Dates = [];
   for (const r of records.Regulations) {
@@ -336,18 +394,44 @@ function loadRecords(dir) {
   for (const m of records.Mappings) {
     for (const d of m.documents || []) records.Mapping_Docs.push({ obligation_id: m.obligation_id, ...d });
   }
+  records.Attributes = [];
+  for (const [kind, sheet] of Object.entries(ATTRIBUTE_PARENTS)) {
+    for (const item of records[sheet]) {
+      for (const a of item.attributes || []) records.Attributes.push({ item_kind: kind, item_id: item.id, ...a });
+    }
+  }
   return records;
+}
+
+const isCellValue = v => v == null || ['string', 'number', 'boolean'].includes(typeof v);
+
+// One extra column per x- field that appears in these records, in first-seen order.
+function extensionColumns(rows) {
+  const keys = [];
+  for (const row of rows) {
+    for (const [k, v] of Object.entries(row || {})) {
+      if (isExtension(k) && isCellValue(v) && !keys.includes(k)) keys.push(k);
+    }
+  }
+  return keys.map(k => ({ key: k, header: k, required: false, type: 'raw', extension: true,
+    note: 'Extension field (name starts with x-): TraceMap keeps it but does not use it.' }));
 }
 
 // Lists fields present in the YAML that have no column, so data loss is visible, not silent.
 function reportUnmappedFields(sheet, cols, rows) {
   const known = new Set(cols.map(c => c.key));
-  if (NESTED[sheet]) known.add(NESTED[sheet]);
+  for (const k of NESTED[sheet] || []) known.add(k);
   const unknown = new Map();
+  const nested = new Map();
   for (const row of rows) {
-    for (const k of Object.keys(row || {})) if (!known.has(k)) unknown.set(k, (unknown.get(k) || 0) + 1);
+    for (const [k, v] of Object.entries(row || {})) {
+      if (known.has(k) && !(isExtension(k) && !isCellValue(v))) continue;
+      const map = isExtension(k) ? nested : unknown;
+      map.set(k, (map.get(k) || 0) + 1);
+    }
   }
-  for (const [k, n] of unknown) console.warn(`  warning: ${sheet}: field "${k}" has no column; dropped from ${n} record(s)`);
+  for (const [k, n] of unknown) console.warn(`  warning: ${sheet}: field "${k}" has no column; dropped from ${n} record(s). Rename it to x-${k} to keep it.`);
+  for (const [k, n] of nested) console.warn(`  warning: ${sheet}: field "${k}" holds a list or map, which a cell cannot hold; left out for ${n} record(s)`);
 }
 
 // ---------- cell helpers ----------
@@ -365,6 +449,7 @@ function headerNote(col) {
     case 'date':      lines.push('Date in ISO format YYYY-MM-DD'); break;
     case 'integer':   lines.push('Whole number, 0 or greater'); break;
     case 'boolean':   lines.push('TRUE or FALSE'); break;
+    case 'kv_map':    lines.push('key: value pairs separated by a pipe, e.g. strength: strong | reviewed_by: ciso'); break;
     default: break;
   }
   return lines.join('\n');
@@ -383,10 +468,29 @@ function toCellValue(col, v) {
       return v === true || v === 'true' || v === 'TRUE';
     case 'integer':
       return Number(v);
+    case 'kv_map':
+      return kvMapCell(v);
+    case 'raw':
+      return isCellValue(v) ? (typeof v === 'string' ? v.replace(/\s+$/, '') : v) : null;
     default:
       // Folded YAML scalars (>) end in a newline; drop trailing whitespace so cells stay clean.
       return typeof v === 'string' ? v.replace(/\s+$/, '') : v;
   }
+}
+
+// { strength: 'strong', reviewed_by: 'ciso' } -> "strength: strong | reviewed_by: ciso".
+// A key or value containing "|" (or a key containing ":") could not be read back, so export stops.
+function kvMapCell(map) {
+  if (!map || typeof map !== 'object') return String(map);
+  const parts = Object.entries(map).map(([k, v]) => {
+    const text = String(v);
+    if (k.includes('|') || k.includes(':') || text.includes('|')) {
+      fail(`attribute "${k}: ${text}" contains "|"${k.includes(':') ? ' or a ":" in its name' : ''}, which the Attributes cell uses as a separator. ` +
+        'Change it in relationships.yaml, or keep that relationship out of the spreadsheet. No workbook written.');
+    }
+    return `${k}: ${text}`;
+  });
+  return parts.join(' | ');
 }
 
 function displayLength(col, v) {
@@ -466,8 +570,8 @@ const SHEET_PROTECTION = {
 // Populated (--populate, records is an array): no example row; records start at row 2.
 // The importer skips row 2 only when the A2 note is present, so both layouts import correctly.
 function addEntitySheet(wb, sheet, catalogInfo, records) {
-  const cols = columnsFor(sheet, catalogInfo);
   const populating = Array.isArray(records);
+  const cols = columnsFor(sheet, catalogInfo).concat(populating ? extensionColumns(records) : []);
   if (populating) reportUnmappedFields(sheet, cols, records);
   const rows = populating ? records : [exampleFor(sheet, cols, catalogInfo)];
   const lastDataRow = Math.max(HEADER_ROW + 1, HEADER_ROW + rows.length);
@@ -550,7 +654,15 @@ function addInstructionsSheet(wb, built, catalogPath, populated) {
   v.alignment = { horizontal: 'left' };
   v.note = 'Read by the importer. Do not edit or move this cell.';
 
-  let r = 4;
+  // Machine-read data schema version (the YAML format). The importer reads C3; do not move it.
+  label(3, 'Data schema version');
+  const sv = ws.getCell('C3');
+  sv.value = SCHEMA_VERSION;
+  sv.font = { bold: true };
+  sv.alignment = { horizontal: 'left' };
+  sv.note = 'Read by the importer and written into each YAML file. Do not edit or move this cell.';
+
+  let r = 5;
   const heading = text => {
     const c = ws.getCell(r, 2);
     c.value = text;
@@ -594,14 +706,19 @@ function addInstructionsSheet(wb, built, catalogPath, populated) {
   para('IDs', 'IDs must be unique within their tab and must not contain a slash (/) or hash (#). Lowercase letters, digits, hyphens, and underscores are safest. Other tabs refer to records by these IDs, so changing one means updating every reference.');
   para('Dates', 'Use ISO format YYYY-MM-DD (for example 2026-07-10). Date columns are formatted to display this way.');
   para('TRUE / FALSE', 'Use the dropdown. Blank means the field is not set and the default applies.');
+  para('Sequence', 'Optional sort position (Regulations, Obligations, Documents). Lower numbers come first; rows without one keep their order after those with one.');
+  para('Parent', 'Optional ID of another row on the same tab (Regulations, Topics, Documents). A row cannot be its own parent, directly or through a chain.');
+  para('Attributes', 'Item Kind and Item ID name the regulation, obligation, or document the fact belongs to. Each name once per item.');
+  para('Extension columns', 'Columns whose header starts with x- are your own. TraceMap carries them through import and export unchanged and does not use them.');
+  para('Relationships', 'From Item and To Item take any regulation, obligation, document, topic, or control ID. If two kinds of item share an ID, add the kind in front: topic:logging or control:logging.');
   r += 1;
 
   heading('Importing');
   para('Run', 'From the TraceMap-catalog folder: npm run import -- --file <this-file.xlsx>  (writes YAML into data/). Then npm run build. ' +
     'If anything is wrong, no YAML is written and import-report.md lists each problem by tab, row, and column.');
-  para('Version check', 'The importer reads the template version in C2. A different major version is refused; a different minor version produces a warning.');
+  para('Version check', 'The importer reads the template version in C2 and the data schema version in C3. A different major version is refused; a different minor version produces a warning.');
 
-  for (let i = 4; i < r; i++) ws.getRow(i).alignment = { wrapText: true, vertical: 'top' };
+  for (let i = 5; i < r; i++) ws.getRow(i).alignment = { wrapText: true, vertical: 'top' };
   return ws;
 }
 
@@ -658,8 +775,14 @@ async function main() {
   const catalogPath = path.resolve(ROOT, args.catalog);
   const outPath = path.resolve(ROOT, args.out);
   const catalogInfo = loadCatalog(catalogPath);
-  const records = args.populate ? loadRecords(path.resolve(ROOT, args.populate)) : null;
-  if (records) checkBeforeExport(records, catalogInfo.catalog, args);
+  const versions = [['catalog.yaml', catalogInfo.catalog.schema_version]];
+  const records = args.populate ? loadRecords(path.resolve(ROOT, args.populate), versions) : null;
+  if (records) {
+    const sv = checkDataVersions(versions);
+    for (const w of sv.warnings) console.warn(`  warning: ${w}`);
+    if (sv.errors.length) fail(sv.errors.join('\n') + '\nNo workbook written.');
+    checkBeforeExport(records, catalogInfo.catalog, args);
+  }
   const counts = [];
 
   const wb = new ExcelJS.Workbook();

@@ -5,6 +5,8 @@
 # layer    optional; defaults to the document's own layer
 # rationale  required in practice for deviations_noted or verification_pending; shown to readers
 
+schema_version: "1.0"
+
 mappings:
   # Access
   - obligation_id: soc2-cc6-2

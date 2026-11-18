@@ -1,5 +1,7 @@
 # Accountable roles. Use roles, not names, so the catalog does not go stale
 # when people change jobs.
+schema_version: "1.0"
+
 roles:
   - id: ciso
     name: Chief Information Security Officer

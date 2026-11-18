@@ -1,6 +1,8 @@
 # Shared controls: one plain-language control that satisfies requirements in
 # several regulations. Obligations point here with common_control. Each control
 # belongs to one topic.
+schema_version: "1.0"
+
 controls:
   - id: access-lifecycle
     topic: access

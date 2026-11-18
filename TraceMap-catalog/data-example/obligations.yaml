@@ -7,6 +7,8 @@
 # plain_title, plain_summary   optional beginner-friendly wording for standalone requirements
 # family            grouping on the regulation page
 
+schema_version: "1.0"
+
 obligations:
   # ---------------- SOC 2 ----------------
   - id: soc2-cc1-2

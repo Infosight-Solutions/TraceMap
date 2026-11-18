@@ -238,3 +238,12 @@ test('build.js succeeds on the example data and fails on broken data', t => {
   assert.equal(res.status, 1);
   assert.match(res.stderr, /error {4}roles\.yaml: duplicate id "ciso"/);
 });
+
+test('status_descriptions: keys must be statuses and values text', () => {
+  const d = fresh();
+  d.catalog.status_descriptions = { verified: 'Checked.', done: 'Finished.', not_assessed: 3 };
+  assert.deepEqual(validate(d, TODAY).errors.map(formatIssue), [
+    'catalog.yaml: status_descriptions "done" is not a status',
+    'catalog.yaml: status_descriptions "not_assessed" must be text',
+  ]);
+});

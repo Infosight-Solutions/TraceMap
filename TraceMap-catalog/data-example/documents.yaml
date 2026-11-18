@@ -145,7 +145,7 @@ documents:
     layer: evidence
     doc_type: Record
     date_filed: 2026-07-08
-    valid_until: 2027-01-08
+    valid_until: 2030-12-31
     url: https://docs.example.com/evidence/EVD-001
     attributes:
       - name: Accounts reviewed

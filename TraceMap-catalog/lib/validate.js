@@ -23,7 +23,7 @@
 //
 // options.today ('YYYY-MM-DD', default today) is the date valid_until is compared with.
 
-const { ISO_DATE, COLUMNS, ITEM_KINDS, relationshipTypes } = require('./schema');
+const { ISO_DATE, COLUMNS, ITEM_KINDS, STATUSES, relationshipTypes } = require('./schema');
 const { layoutIssues } = require('./layouts');
 
 function isMissing(v) { return !v || (typeof v === 'string' && !v.trim()); }
@@ -162,6 +162,12 @@ function validate(d, options = {}) {
     indexById(c.relationship_types, 'catalog.yaml relationship_types');
   }
   const relTypeIds = relationshipTypes(c).map(t => t.id);
+  const sd = c.status_descriptions;
+  if (sd != null && (typeof sd !== 'object' || Array.isArray(sd))) err(CAT, 'status_descriptions must be a map of status: description', { field: 'status_descriptions' });
+  else if (sd) Object.keys(sd).forEach(k => {
+    if (!STATUSES.includes(k)) err(CAT, 'status_descriptions "' + k + '" is not a status', { field: 'status_descriptions', value: k, expected: STATUSES.join(' | ') });
+    else if (typeof sd[k] !== 'string') err(CAT, 'status_descriptions "' + k + '" must be text', { field: 'status_descriptions', value: k, expected: 'text' });
+  });
   layoutIssues(c).forEach(i => err(Object.assign({}, CAT, { where: 'catalog.yaml ' + i.path }), i.message, { field: i.path, value: i.value, expected: i.expected }));
 
   const layerList = [...layers.keys()].join(' | ');

@@ -25,11 +25,11 @@ const STATUSES         = ['verified', 'deviations_noted', 'verification_pending'
 // Relationship types used when catalog.yaml has no relationship_types section. Listing that
 // section replaces these entirely. label reads from from_item; inverse_label from to_item.
 const DEFAULT_RELATIONSHIP_TYPES = [
-  { id: 'upstream',   label: 'Upstream of',   inverse_label: 'Downstream of' },
-  { id: 'downstream', label: 'Downstream of', inverse_label: 'Upstream of' },
-  { id: 'requires',   label: 'Requires',      inverse_label: 'Required by' },
-  { id: 'references', label: 'References',    inverse_label: 'Referenced by' },
-  { id: 'related',    label: 'Related to',    inverse_label: 'Related to' },
+  { id: 'upstream',   label: 'Upstream of',   inverse_label: 'Downstream of', description: 'The first item comes before the second and shapes it, such as a policy upstream of the procedures that carry it out.' },
+  { id: 'downstream', label: 'Downstream of', inverse_label: 'Upstream of',   description: 'The first item follows from the second, such as a procedure downstream of its policy.' },
+  { id: 'requires',   label: 'Requires',      inverse_label: 'Required by',   description: 'The first item cannot be met without the second.' },
+  { id: 'references', label: 'References',    inverse_label: 'Referenced by', description: 'The first item points to the second for detail.' },
+  { id: 'related',    label: 'Related to',    inverse_label: 'Related to',    description: 'The two items cover the same subject.' },
 ];
 
 // The relationship types a catalog uses, with label and inverse_label filled in.

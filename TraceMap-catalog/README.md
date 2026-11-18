@@ -12,11 +12,11 @@ Compliance evidence is easier to use when it can be browsed. Engineers, managers
 
 - **Home page** with applicability checkboxes ("We collect personal data about people in the EU", …). Checking them narrows every view to the regulations that apply.
 - **Topics**: plain-language areas such as access, encryption, or incident response, each listing the requirements from every regulation that touch it.
-- **Regulation library** with filters for type, timing, documentation status, and your own facets (for example category or jurisdiction), plus a page per regulation with its requirements, coverage, and key dates.
+- **Regulation library** with filters for type, timing, documentation status, and your own facets (for example category or jurisdiction), plus a page per regulation: category boxes showing where it sits on each facet, who it applies to, key dates, coverage, requirements, related items, and the documents it relies on. Which sections appear, and in what order, is set in `catalog.yaml`.
 - **Traceability** from each requirement to the documents that address it, grouped by your document layers (for example policy, standard, procedure, evidence), with a documentation status and rationale.
 - **Crosswalk** of shared controls that satisfy requirements in several regulations at once.
 - **Timeline** of effective dates, deadlines, and internal milestones, with countdowns to upcoming ones.
-- **Documents** register, a **Reviews** page listing overdue reviews, a **Glossary** whose terms get hover definitions throughout, full-text **Search**, and CSV downloads.
+- **Documents** register, a **Reviews** page listing overdue reviews, a **Glossary** whose terms get hover definitions throughout, full-text **Search**, CSV downloads, and a **Legend** page (linked in the footer) explaining the status colors, category boxes, tags, and terms.
 
 ## How it works
 

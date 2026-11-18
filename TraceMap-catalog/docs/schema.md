@@ -104,6 +104,7 @@ The whole document is a single object — no wrapping key.
 |---|---|---|---|
 | `review_interval_days` | integer | 365 | Global review cadence in days. Can be overridden per document or per mapping with the same field name. |
 | `status_labels` | object | *(see Enumerations)* | Map of status key → display string. Overrides the four default labels in the UI and CSV exports. |
+| `status_descriptions` | object | built-in text | Map of status key → one-sentence meaning. Shown when hovering a status label, coverage bar, or shared-controls dot, and on the Legend page. |
 | `applicability_prompt` | string | "Check everything that applies to you" | Label above the applicability checkboxes. |
 | `applicability` | list | *(none)* | Defines the filter checkboxes on the home page. If empty, the applicability panel is hidden. |
 | `group_field` | string | `"category"` | Which facet field to use for default grouping in the regulation library. Should match a `field` in `facets`. |
@@ -160,7 +161,7 @@ layouts:
 | `browse.default_sort` | `sequence` | Order within groups and in the document list. `sequence`: items with a `sequence` first, lowest first, the rest in file order (with no sequences, this is file order). `name`: alphabetical by name or title. `id`: alphabetical by ID. Grouping by key date still sorts by date. Requirements on a regulation page always follow `sequence`. |
 | `browse.show_columns` | `name`, `type`, facets with `in_table: true`, `key_date`, `coverage` | Library table columns, in order. A facet field adds that facet's column. |
 | `browse.display_mode` | `list` | |
-| `detail.panels` | all eight, in the order above | Sections of the regulation page, top to bottom. Leave one out to hide it. An entry can carry options: `- { panel: category_boxes, max_values: 6 }`. Two panels that sit side by side (`applies_when`, `timeline`) share a row when they are next to each other. |
+| `detail.panels` | all eight, in the order above | Sections of the regulation page, top to bottom: `identity` (ID, name, summary, details, buttons), `category_boxes` (one box per facet, applicable values shaded), `applies_when`, `timeline` (key dates), `status` (coverage counts, or why a context-only regulation is listed), `requirements`, `relationships` (from `relationships.yaml`), `evidence` (every document its requirements rely on, by layer). Leave one out to hide it. An entry can carry options: `- { panel: category_boxes, max_values: 6 }`. Two panels that sit side by side (`applies_when`, `timeline`) share a row when they are next to each other. |
 | `dashboard.enabled` | `false` | Accepted and checked, but has no effect until a dashboard page exists. |
 | `dashboard.aggregate_by` | `[status, source_type]` | `status`, `source_type`, or a facet field. |
 
@@ -442,7 +443,8 @@ matches more than one item is a build error that names the prefixes to use.
 The same pair of items with the same type may be listed only once.
 
 **Relationship types** are declared in `catalog.yaml`. Without a `relationship_types` section,
-the five defaults below apply; listing the section replaces them entirely.
+the five defaults below apply (each with a short description for the Legend page); listing the
+section replaces them entirely.
 
 ```yaml
 relationship_types:
@@ -495,8 +497,10 @@ These older fields still work and are still validated. A later release moves the
 | `verification_pending` | Verification pending | Not yet addressed in documentation. `rationale` is expected. |
 | `not_assessed` | Not yet assessed | Has not been evaluated. No rationale expected. |
 
-Display labels are overridable via `catalog.status_labels`. Color coding: verified = navy,
-deviations noted = amber, verification pending = red, not assessed = gray dashed.
+Display labels are overridable via `catalog.status_labels`, and the hover descriptions via
+`catalog.status_descriptions`. Color coding: verified = navy, deviations noted = amber,
+verification pending = red outline, not assessed = gray dashed. The Legend page (footer link)
+shows each color with its meaning.
 
 ### Default relationship types
 

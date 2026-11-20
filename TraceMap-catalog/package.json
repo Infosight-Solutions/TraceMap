@@ -13,6 +13,7 @@
     "export-xlsx": "node scripts/generate-template.js --populate data --out dist/tracemap-export.xlsx",
     "test": "node --test \"test/**/*.test.js\""
   },
+  "author": "Infosight Solutions LLC",
   "license": "MIT",
   "dependencies": {
     "exceljs": "^4.4.0",
